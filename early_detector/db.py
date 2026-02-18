@@ -134,6 +134,21 @@ async def insert_signal(token_id: str, instability_index: float,
     logger.info(f"Signal saved for token {token_id} — II={instability_index:.3f}")
 
 
+async def has_recent_signal(token_id: str, minutes: int = 60) -> bool:
+    """Check if a signal was already generated for this token recently."""
+    pool = await get_pool()
+    val = await pool.fetchval(
+        """
+        SELECT 1 FROM signals
+        WHERE token_id = $1
+          AND timestamp > NOW() - ($2 || ' minutes')::INTERVAL
+        LIMIT 1
+        """,
+        token_id, str(minutes),
+    )
+    return val is not None
+
+
 # ── Wallet helpers ────────────────────────────────────────────────────────────
 
 async def upsert_wallet(wallet: str, stats: dict) -> None:

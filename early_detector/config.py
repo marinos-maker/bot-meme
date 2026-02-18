@@ -17,6 +17,7 @@ DEXSCREENER_API_URL: str = os.getenv(
 )
 HELIUS_API_KEY: str = os.getenv("HELIUS_API_KEY", "")
 HELIUS_BASE_URL: str = "https://api.helius.xyz"
+HELIUS_RPC_URL: str = "https://beta.helius-rpc.com/?api-key=fdbec49d-1c82-452f-8adc-cf5c534fe74d"
 GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
 
 # ── Telegram ──────────────────────────────────────────────────────────────────

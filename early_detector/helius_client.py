@@ -1,14 +1,15 @@
 """
-Helius API client — fetch parsed swap transactions from Solana.
+Helius API client — fetch parsed swap transactions and token security info from Solana.
 """
 
 import asyncio
 import aiohttp
+import json
 from loguru import logger
-from early_detector.config import HELIUS_API_KEY, HELIUS_BASE_URL
+from early_detector.config import HELIUS_API_KEY, HELIUS_BASE_URL, HELIUS_RPC_URL
 
-# Rate limiter: max 2 concurrent requests to Helius
-_semaphore = asyncio.Semaphore(2)
+# Rate limiter: max 5 concurrent requests to Helius (RPC + API)
+_semaphore = asyncio.Semaphore(5)
 
 
 async def fetch_token_swaps(session: aiohttp.ClientSession,
@@ -20,17 +21,17 @@ async def fetch_token_swaps(session: aiohttp.ClientSession,
 
     Returns list of dicts with: wallet, type (buy/sell), amount_usd, timestamp
     """
+    # Use the v0 API for parsed transactions
     url = f"{HELIUS_BASE_URL}/v0/addresses/{token_address}/transactions"
     params = {
         "api-key": HELIUS_API_KEY,
         "type": "SWAP",
-        "limit": min(limit, 100),
+        "limit": str(min(limit, 100)),
     }
 
     async with _semaphore:
         try:
-            async with session.get(url, params=params, timeout=15) as resp:
-                await asyncio.sleep(0.3)  # pace requests
+            async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status != 200:
                     logger.warning(f"Helius swaps {resp.status} for {token_address}")
                     return []
@@ -44,57 +45,128 @@ async def fetch_token_swaps(session: aiohttp.ClientSession,
 def _parse_swap_transactions(txns: list, token_address: str) -> list[dict]:
     """
     Parse Helius Enhanced Transaction responses into trade records.
-
-    Each swap has tokenTransfers showing what moved in/out.
-    We determine if it's a buy or sell of our target token.
+    Identify Unique Buyers and SWR data points.
     """
     trades = []
+    if not isinstance(txns, list):
+        return []
+
     for tx in txns:
         if not isinstance(tx, dict):
             continue
 
         timestamp = tx.get("timestamp", 0)
         fee_payer = tx.get("feePayer", "")
-
-        # Look at token transfers to determine buy/sell
+        
+        # Enhanced transaction parsing
+        description = tx.get("description", "")
         token_transfers = tx.get("tokenTransfers", [])
-        native_transfers = tx.get("nativeTransfers", [])
-
-        if not fee_payer:
-            continue
-
-        # Check if this wallet bought or sold the target token
+        
+        # Infer trade type from transfers if description is ambiguous
         bought_amount = 0.0
         sold_amount = 0.0
-
+        
+        # Check transfers relative to the fee payer (likely the trader)
         for transfer in token_transfers:
-            mint = transfer.get("mint", "")
+            mint = transfer.get("mint")
             amount = float(transfer.get("tokenAmount", 0) or 0)
-
+            
             if mint == token_address:
                 if transfer.get("toUserAccount") == fee_payer:
                     bought_amount += amount
                 elif transfer.get("fromUserAccount") == fee_payer:
                     sold_amount += amount
 
-        if bought_amount > 0:
-            trades.append({
-                "wallet": fee_payer,
-                "type": "buy",
-                "amount": bought_amount,
-                "timestamp": timestamp,
-                "token": token_address,
-            })
-        elif sold_amount > 0:
-            trades.append({
-                "wallet": fee_payer,
-                "type": "sell",
-                "amount": sold_amount,
-                "timestamp": timestamp,
-                "token": token_address,
-            })
+        # Determine trade direction
+        trade_type = "unknown"
+        if bought_amount > 0 and sold_amount == 0:
+            trade_type = "buy"
+            amount = bought_amount
+        elif sold_amount > 0 and bought_amount == 0:
+            trade_type = "sell"
+            amount = sold_amount
+        else:
+            continue
+
+        trades.append({
+            "wallet": fee_payer,
+            "type": trade_type,
+            "amount": amount,
+            "timestamp": timestamp,
+            "token": token_address,
+            "tx_signature": tx.get("signature", "")
+        })
 
     return trades
+
+
+async def check_token_security(session: aiohttp.ClientSession, token_address: str) -> dict:
+    """
+    Check token security (Mint Authority, Freeze Authority) using Helius RPC `getAsset`.
+    Returns a dict with flags.
+    """
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "security-check",
+        "method": "getAsset",
+        "params": {
+            "id": token_address
+        }
+    }
+
+    async with _semaphore:
+        try:
+            async with session.post(HELIUS_RPC_URL, json=payload, timeout=5) as resp:
+                if resp.status != 200:
+                    logger.warning(f"RPC getAsset failed: {resp.status}")
+                    return {"mint_authority": None, "freeze_authority": None, "is_safe": False}
+                
+                body = await resp.json()
+                if "error" in body:
+                    logger.warning(f"RPC error for {token_address}: {body['error']}")
+                    return {"mint_authority": None, "freeze_authority": None, "is_safe": False}
+                
+                result = body.get("result", {})
+                
+                # Check authorities
+                authorities = result.get("authorities", [])
+                mint_auth = None
+                freeze_auth = None
+                
+                # DAS API structure for authorities
+                for auth in authorities:
+                    scopes = auth.get("scopes", [])
+                    if "mint" in scopes:
+                        mint_auth = auth.get("address")
+                    if "freeze" in scopes:
+                        freeze_auth = auth.get("address")
+
+                # Alternative: check ownership/supply details if authorities not explicit in DAS
+                # Fallback to standard `getAccountInfo` if DAS `getAsset` is ambiguous (simplified here)
+                
+                # Logic: Safe if Mint and Freeze are None (revoked)
+                is_safe = (mint_auth is None) and (freeze_auth is None)
+                
+                return {
+                    "mint_authority": mint_auth,
+                    "freeze_authority": freeze_auth,
+                    "is_safe": is_safe
+                }
+                
+        except Exception as e:
+            logger.error(f"Security check error for {token_address}: {e}")
+            return {"mint_authority": "Unknown", "freeze_authority": "Unknown", "is_safe": False}
+
+
+async def get_real_unique_buyers(session: aiohttp.ClientSession, token_address: str, limit: int = 100) -> int:
+    """
+    Get COUNT of unique wallets that bought in the last N transactions.
+    This replaces the 'buys_20m' approximation for Stealth Accumulation.
+    """
+    trades = await fetch_token_swaps(session, token_address, limit=limit)
+    buyers = {t["wallet"] for t in trades if t["type"] == "buy"}
+    return len(buyers)
+
 
 
 async def fetch_wallet_history(session: aiohttp.ClientSession,
@@ -108,7 +180,7 @@ async def fetch_wallet_history(session: aiohttp.ClientSession,
     params = {
         "api-key": HELIUS_API_KEY,
         "type": "SWAP",
-        "limit": min(limit, 100),
+        "limit": str(min(limit, 100)),
     }
 
     async with _semaphore:
@@ -119,35 +191,8 @@ async def fetch_wallet_history(session: aiohttp.ClientSession,
                     logger.warning(f"Helius wallet history {resp.status} for {wallet_address}")
                     return []
                 txns = await resp.json()
-
-                trades = []
-                for tx in txns:
-                    if not isinstance(tx, dict):
-                        continue
-                    timestamp = tx.get("timestamp", 0)
-                    token_transfers = tx.get("tokenTransfers", [])
-
-                    for transfer in token_transfers:
-                        mint = transfer.get("mint", "")
-                        amount = float(transfer.get("tokenAmount", 0) or 0)
-                        if not mint or amount == 0:
-                            continue
-
-                        if transfer.get("toUserAccount") == wallet_address:
-                            trade_type = "buy"
-                        elif transfer.get("fromUserAccount") == wallet_address:
-                            trade_type = "sell"
-                        else:
-                            continue
-
-                        trades.append({
-                            "wallet": wallet_address,
-                            "type": trade_type,
-                            "amount": amount,
-                            "timestamp": timestamp,
-                            "token": mint,
-                        })
-                return trades
+                # Reuse the parser
+                return _parse_swap_transactions(txns, "ANY") # Token address not strict here
         except Exception as e:
             logger.error(f"Helius wallet history error for {wallet_address}: {e}")
             return []
@@ -211,14 +256,14 @@ def compute_wallet_performance(trades: list[dict]) -> dict[str, dict]:
     return wallet_stats
 
 
-async def test_helius():
-    """Quick connectivity test for Helius API."""
-    # Test with SOL token
-    test_addr = "So11111111111111111111111111111111111111112"
+async def test_helius_connection():
+    """Quick connectivity test."""
+    test_addr = "So11111111111111111111111111111111111111112" # SOL
     async with aiohttp.ClientSession() as session:
-        trades = await fetch_token_swaps(session, test_addr, limit=5)
-        if trades:
-            logger.info(f"Helius test OK: got {len(trades)} swap records")
-        else:
-            logger.warning("Helius test: no swaps found (may be normal for SOL)")
-        logger.info("Helius API connection successful")
+        # Test 1: Swaps
+        swaps = await fetch_token_swaps(session, test_addr, limit=5)
+        logger.info(f"Helius Swaps Test: {len(swaps)} records found")
+        
+        # Test 2: Security (RPC)
+        security = await check_token_security(session, test_addr)
+        logger.info(f"Helius Security Test: {security}")

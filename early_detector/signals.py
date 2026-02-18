@@ -13,7 +13,7 @@ from early_detector.config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
 )
-from early_detector.db import insert_signal
+from early_detector.db import insert_signal, has_recent_signal
 
 
 def passes_trigger(token: dict, threshold: float) -> bool:
@@ -58,6 +58,19 @@ def passes_safety_filters(token: dict) -> bool:
     if price_change_5m and price_change_5m >= SPIKE_THRESHOLD:
         logger.debug(f"Safety: price spike {price_change_5m:.1f}x in 5m — too late")
         return False
+        
+    # Security: Mint Authority & Freeze Authority
+    # If these keys exist and are NOT None, it means the authority is enabled (risk of rug/freeze)
+    mint_auth = token.get("mint_authority")
+    freeze_auth = token.get("freeze_authority")
+    
+    if mint_auth:
+        logger.debug(f"Safety: Mint Authority enabled ({mint_auth})")
+        return False
+        
+    if freeze_auth:
+        logger.debug(f"Safety: Freeze Authority enabled ({freeze_auth})")
+        return False
 
     return True
 
@@ -77,6 +90,11 @@ async def process_signals(scored_df, threshold: float) -> list[dict]:
             continue
 
         if not passes_safety_filters(token_data):
+            continue
+
+        # Prevent duplicate signals if one was already sent recently (e.g. 60m)
+        token_id = str(token_data.get("token_id"))
+        if await has_recent_signal(token_id, minutes=60):
             continue
 
         signal = {

@@ -74,11 +74,19 @@ async def scan_cycle(session: aiohttp.ClientSession,
         # Accumulation stats from history
         buys_20m = sum((r.get("buys_5m") or 0) for r in history[:4])
         sells_20m = sum((r.get("sells_5m") or 0) for r in history[:4])
-        unique_buyers = buys_20m  # approximation (exact count requires tx-level data)
+        
+        # Use real unique buyers if available (from Helius enrichment), else fallback to approximation
+        unique_buyers_real = metrics.get("unique_buyers_50tx", 0)
+        unique_buyers = unique_buyers_real if unique_buyers_real > 0 else buys_20m
 
-        # Smart Wallet Rotation
+        # Smart Wallet Rotation (SWR) Mock-up / Placeholder
+        # In a full PRO version, we would check which of the current buyers are in 'smart_wallet_list'.
+        # Since we don't have the buyer list for every token in this lightweight loop, 
+        # we can't compute SWR perfectly without more API calls. 
+        # For now, we keep the placeholder or use a random factor for testing if needed.
+        # Ideally: active_wallets = await get_active_wallets(token_address)
         swr = compute_swr(
-            active_wallets=[],  # placeholder — requires on-chain tx data
+            active_wallets=[],  # Still placeholder until deep transaction parsing is enabled widely
             smart_wallet_list=smart_wallet_list,
             global_active_smart=len(smart_wallet_list),
         )

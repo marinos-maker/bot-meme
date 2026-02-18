@@ -4,16 +4,24 @@ AI Analyst — Uses Gemini LLM to interpret token signals and metrics.
 
 import json
 from datetime import datetime
-import google.generativeai as genai
 from loguru import logger
 from early_detector.config import GOOGLE_API_KEY
 
-# Configure Gemini
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-else:
-    logger.warning("GOOGLE_API_KEY not found. AI Analyst will be disabled.")
+# Try using the new google-genai library if available, otherwise fallback (though this file is updated to use new syntax)
+try:
+    from google import genai
+    from google.genai import types
+    HAS_NEW_GENAI = True
+except ImportError:
+    HAS_NEW_GENAI = False
+    import google.generativeai as genai_old
 
+# Configure Gemini for old library (deprecated)
+if not HAS_NEW_GENAI and GOOGLE_API_KEY:
+    try:
+        genai_old.configure(api_key=GOOGLE_API_KEY)
+    except Exception as e:
+        logger.warning(f"Failed to configure old genai: {e}")
 
 async def analyze_token_signal(token_data: dict, history: list) -> dict:
     """
@@ -75,23 +83,45 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         }}
         """
 
-        # 3. Try 1.5 Flash first, then fallback to Pro
-        response = None
-        for model_name in ['gemini-1.5-flash', 'gemini-pro']:
-            try:
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(prompt)
-                if response:
-                    break
-            except Exception as e:
-                logger.warning(f"Failed with {model_name}: {e}")
-                continue
+        # 3. Request Analysis
+        response_text = ""
+        
+        # Use available models (Gemini 2.0 Flash is preferred)
+        models_to_try = ['gemini-2.0-flash', 'gemini-flash-latest']
+        
+        if HAS_NEW_GENAI:
+            client = genai.Client(api_key=GOOGLE_API_KEY)
+            for model_name in models_to_try:
+                try:
+                    # Using synchronous call for simplicity as per original implementation
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=prompt
+                    )
+                    if response and response.text:
+                        response_text = response.text
+                        break
+                except Exception as e:
+                    logger.warning(f"Failed with {model_name} (new genai): {e}")
+                    continue
+        else:
+            # Fallback to old library
+            for model_name in models_to_try:
+                try:
+                    model = genai_old.GenerativeModel(model_name)
+                    response = model.generate_content(prompt)
+                    if response and response.text:
+                        response_text = response.text
+                        break
+                except Exception as e:
+                    logger.warning(f"Failed with {model_name} (old genai): {e}")
+                    continue
 
-        if not response:
+        if not response_text:
             raise Exception("All Gemini models failed")
         
         # 4. Parse JSON from response text
-        text = response.text.strip()
+        text = response_text.strip()
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0].strip()
         elif "```" in text:

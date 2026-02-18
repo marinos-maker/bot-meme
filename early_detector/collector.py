@@ -10,6 +10,7 @@ from early_detector.config import (
     BIRDEYE_HEADERS,
     DEXSCREENER_API_URL,
 )
+from early_detector.helius_client import check_token_security, get_real_unique_buyers
 
 # Rate limiter: max 2 concurrent requests to Birdeye (free tier is limited)
 _semaphore = asyncio.Semaphore(2)
@@ -157,6 +158,15 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
     top10 = await fetch_top_holders(session, token_address)
     if top10 is not None:
         metrics["top10_ratio"] = top10
+
+    # Enrich with Security Checks via Helius RPC
+    security = await check_token_security(session, token_address)
+    metrics["mint_authority"] = security.get("mint_authority")
+    metrics["freeze_authority"] = security.get("freeze_authority")
+
+    # Enrich with Unique Buyers (simulated real-time stealth accumulation)
+    unique_buyers = await get_real_unique_buyers(session, token_address, limit=50)
+    metrics["unique_buyers_50tx"] = unique_buyers
 
     return metrics
 

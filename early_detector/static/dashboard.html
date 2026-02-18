@@ -62,6 +62,21 @@
             pointer-events: none;
         }
 
+        .copy-icon {
+            cursor: pointer;
+            width: 14px;
+            height: 14px;
+            margin-left: 6px;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        .copy-icon:hover {
+            opacity: 1;
+        }
+
         /* Header */
         .header {
             position: sticky;
@@ -1255,7 +1270,13 @@
                 <td>
                     <div class="token-info">
                         <span class="token-name">${s.token_symbol}</span>
-                        <span class="token-address">${s.token_address.slice(0, 8)}…</span>
+                        <span class="token-address">
+                            ${s.token_address.slice(0, 8)}…
+                            <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="copyToClipboard('${s.token_address}')">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                        </span>
                     </div>
                 </td>
                 <td><span class="score-badge ${getScoreClass(s.instability_index)}">${s.instability_index.toFixed(3)}</span></td>
@@ -1302,7 +1323,13 @@
                 <td>
                     <div class="token-info">
                         <span class="token-name">${t.symbol}</span>
-                        <span class="token-address">${t.address.slice(0, 8)}…${t.address.slice(-4)}</span>
+                        <span class="token-address">
+                            ${t.address.slice(0, 8)}…${t.address.slice(-4)}
+                            <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="copyToClipboard('${t.address}')">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                        </span>
                     </div>
                 </td>
                 <td class="mono">$${formatNum(t.price)}</td>
@@ -1456,6 +1483,16 @@
             toast.textContent = message;
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 4000);
+        }
+
+        async function copyToClipboard(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast('Address copied to clipboard', 'success');
+            } catch (err) {
+                console.error('Failed to copy: ', err);
+                showToast('Failed to copy address', 'error');
+            }
         }
 
         // ── Refresh All ────────────────────────────────────────────────────────────
