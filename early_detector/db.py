@@ -3,6 +3,7 @@ Database module — async PostgreSQL connection pool and CRUD helpers.
 """
 
 import asyncpg
+from decimal import Decimal
 from loguru import logger
 from early_detector.config import SUPABASE_DB_URL
 
@@ -87,7 +88,15 @@ async def get_recent_metrics(token_id: str, minutes: int = 60) -> list[dict]:
         """,
         token_id, str(minutes),
     )
-    return [dict(r) for r in rows]
+    # Convert Decimal values to float for numpy/math compatibility
+    result = []
+    for r in rows:
+        d = dict(r)
+        for k, v in d.items():
+            if isinstance(v, Decimal):
+                d[k] = float(v)
+        result.append(d)
+    return result
 
 
 async def get_all_recent_instability(minutes: int = 60) -> list[dict]:
@@ -156,3 +165,20 @@ async def get_smart_wallets() -> list[str]:
         """
     )
     return [r["wallet"] for r in rows]
+
+
+async def get_tracked_tokens(limit: int = 20) -> list[str]:
+    """Return addresses of recently active tokens for wallet profiling."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT DISTINCT t.address
+        FROM tokens t
+        JOIN token_metrics_timeseries m ON m.token_id = t.id
+        WHERE m.timestamp > NOW() - INTERVAL '24 hours'
+        ORDER BY t.address
+        LIMIT $1
+        """,
+        limit,
+    )
+    return [r["address"] for r in rows]

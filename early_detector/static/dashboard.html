@@ -1,0 +1,1478 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solana Early Detector — Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-card: rgba(17, 24, 39, 0.7);
+            --bg-card-hover: rgba(30, 41, 59, 0.8);
+            --border: rgba(99, 102, 241, 0.15);
+            --border-hover: rgba(99, 102, 241, 0.4);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #6366f1;
+            --accent-glow: rgba(99, 102, 241, 0.3);
+            --green: #10b981;
+            --green-glow: rgba(16, 185, 129, 0.2);
+            --red: #ef4444;
+            --red-glow: rgba(239, 68, 68, 0.2);
+            --yellow: #f59e0b;
+            --cyan: #06b6d4;
+            --purple: #a855f7;
+            --gradient-1: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            --gradient-2: linear-gradient(135deg, #06b6d4 0%, #10b981 100%);
+            --gradient-3: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+            --gradient-4: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Background effects */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle at 20% 50%, rgba(99, 102, 241, 0.05) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(6, 182, 212, 0.04) 0%, transparent 50%),
+                radial-gradient(circle at 40% 80%, rgba(168, 85, 247, 0.03) 0%, transparent 50%);
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        /* Header */
+        .header {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: rgba(10, 14, 23, 0.85);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: 800;
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            background: var(--green-glow);
+            color: var(--green);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .auto-refresh-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 40px;
+            height: 22px;
+            background: var(--bg-secondary);
+            border-radius: 11px;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            transition: all 0.3s;
+        }
+
+        .toggle-switch.active {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: white;
+            transition: transform 0.3s;
+        }
+
+        .toggle-switch.active::after {
+            transform: translateX(18px);
+        }
+
+        .refresh-btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-family: inherit;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .refresh-btn:hover {
+            border-color: var(--accent);
+            color: var(--text-primary);
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        /* Main layout */
+        .container {
+            position: relative;
+            z-index: 1;
+            max-width: 1440px;
+            margin: 0 auto;
+            padding: 24px 32px;
+        }
+
+        /* Navigation Tabs */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 4px;
+            margin-bottom: 24px;
+            backdrop-filter: blur(10px);
+            width: fit-content;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-muted);
+            transition: all 0.3s;
+            border: none;
+            background: transparent;
+            font-family: inherit;
+        }
+
+        .tab:hover {
+            color: var(--text-secondary);
+        }
+
+        .tab.active {
+            background: var(--accent);
+            color: white;
+            box-shadow: 0 2px 8px var(--accent-glow);
+        }
+
+        /* Section */
+        .section {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .section.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* KPI Cards */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .kpi-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .kpi-card:hover {
+            border-color: var(--border-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            border-radius: 16px 16px 0 0;
+        }
+
+        .kpi-card:nth-child(1)::before {
+            background: var(--gradient-1);
+        }
+
+        .kpi-card:nth-child(2)::before {
+            background: var(--gradient-2);
+        }
+
+        .kpi-card:nth-child(3)::before {
+            background: var(--gradient-4);
+        }
+
+        .kpi-card:nth-child(4)::before {
+            background: var(--gradient-3);
+        }
+
+        .kpi-label {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .kpi-value {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: -1px;
+        }
+
+        .kpi-card:nth-child(1) .kpi-value {
+            color: var(--accent);
+        }
+
+        .kpi-card:nth-child(2) .kpi-value {
+            color: var(--green);
+        }
+
+        .kpi-card:nth-child(3) .kpi-value {
+            color: var(--purple);
+        }
+
+        .kpi-card:nth-child(4) .kpi-value {
+            color: var(--yellow);
+        }
+
+        .kpi-sub {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* Cluster chips */
+        .cluster-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .cluster-chip {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            backdrop-filter: blur(10px);
+        }
+
+        .cluster-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .cluster-icon.retail {
+            background: rgba(99, 102, 241, 0.15);
+        }
+
+        .cluster-icon.sniper {
+            background: rgba(245, 158, 11, 0.15);
+        }
+
+        .cluster-icon.insider {
+            background: rgba(239, 68, 68, 0.15);
+        }
+
+        .cluster-icon.unknown {
+            background: rgba(100, 116, 139, 0.15);
+        }
+
+        .cluster-label {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+
+        .cluster-count {
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        /* Tables */
+        .table-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            backdrop-filter: blur(10px);
+        }
+
+        .table-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .table-title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            text-align: left;
+            padding: 12px 16px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        td {
+            padding: 12px 16px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            border-bottom: 1px solid rgba(99, 102, 241, 0.05);
+        }
+
+        tr:hover td {
+            background: rgba(99, 102, 241, 0.03);
+        }
+
+        .token-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .token-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .token-address {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: monospace;
+        }
+
+        /* Buy Button */
+        .buy-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            background: var(--gradient-2);
+            color: white;
+            border: none;
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+        }
+
+        .buy-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);
+        }
+
+        /* Score badge */
+        .score-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 700;
+            font-family: monospace;
+        }
+
+        .score-high {
+            background: var(--red-glow);
+            color: var(--red);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .score-medium {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--yellow);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        .score-low {
+            background: rgba(100, 116, 139, 0.15);
+            color: var(--text-muted);
+            border: 1px solid rgba(100, 116, 139, 0.3);
+        }
+
+        /* Cluster label */
+        .label {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .label-retail {
+            background: rgba(99, 102, 241, 0.15);
+            color: var(--accent);
+        }
+
+        .label-sniper {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--yellow);
+        }
+
+        .label-insider {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--red);
+        }
+
+        .label-unknown {
+            background: rgba(100, 116, 139, 0.15);
+            color: var(--text-muted);
+        }
+
+        /* Action buttons */
+        .actions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .action-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s;
+        }
+
+        .action-card:hover {
+            border-color: var(--border-hover);
+        }
+
+        .action-card h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .action-card p {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+            line-height: 1.5;
+        }
+
+        .action-btn {
+            width: 100%;
+            padding: 12px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            border: none;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .action-btn.primary {
+            background: var(--gradient-1);
+            color: white;
+            box-shadow: 0 4px 16px var(--accent-glow);
+        }
+
+        .action-btn.primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 24px var(--accent-glow);
+        }
+
+        .action-btn.secondary {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .action-btn.secondary:hover {
+            border-color: var(--accent);
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 14px 20px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 200;
+            animation: slideUp 0.3s ease;
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+        }
+
+        .toast.success {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--green);
+            border-color: rgba(16, 185, 129, 0.3);
+        }
+
+        .toast.info {
+            background: rgba(99, 102, 241, 0.15);
+            color: var(--accent);
+            border-color: rgba(99, 102, 241, 0.3);
+        }
+
+        .toast.error {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--red);
+            border-color: rgba(239, 68, 68, 0.3);
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+
+        .empty-state .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .empty-state p {
+            font-size: 14px;
+        }
+
+        /* Loading spinner */
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 16px;
+            }
+
+            .header {
+                padding: 12px 16px;
+            }
+
+            .kpi-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--accent);
+        }
+
+        /* Number formatting helper */
+        .mono {
+            font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+            font-size: 13px;
+        }
+
+        .positive {
+            color: var(--green);
+        }
+
+        .negative {
+            color: var(--red);
+        }
+
+        .last-update {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        /* AI Analyst UI */
+        .analyst-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: rgba(168, 85, 247, 0.15);
+            color: var(--purple);
+            border: 1px solid rgba(168, 85, 247, 0.3);
+            margin-right: 6px;
+        }
+
+        .analyst-btn:hover {
+            background: rgba(168, 85, 247, 0.25);
+            border-color: var(--purple);
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(8px);
+            z-index: 1000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .modal {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            width: 100%;
+            max-width: 500px;
+            border-radius: 24px;
+            padding: 32px;
+            position: relative;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.5), 0 0 20px var(--accent-glow);
+            animation: modalScale 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        @keyframes modalScale {
+            from {
+                opacity: 0;
+                transform: scale(0.9);
+            }
+
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 24px;
+            cursor: pointer;
+        }
+
+        .verdict-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+        }
+
+        .verdict-title {
+            font-size: 20px;
+            font-weight: 800;
+            color: var(--text-primary);
+        }
+
+        .verdict-badge {
+            padding: 8px 16px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+
+        .v-BUY {
+            background: var(--green);
+            color: white;
+            box-shadow: 0 4px 12px var(--green-glow);
+        }
+
+        .v-AVOID {
+            background: var(--red);
+            color: white;
+            box-shadow: 0 4px 12px var(--red-glow);
+        }
+
+        .v-WAIT {
+            background: var(--yellow);
+            color: white;
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+        }
+
+        .analysis-section {
+            margin-bottom: 20px;
+        }
+
+        .analysis-label {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .analysis-text {
+            font-size: 14px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        .risk-list {
+            list-style: none;
+        }
+
+        .risk-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .risk-item::before {
+            content: '⚠️';
+            font-size: 12px;
+        }
+
+        .rating-bar {
+            height: 6px;
+            background: var(--bg-primary);
+            border-radius: 3px;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+
+        .rating-progress {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 1s ease-out;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">🔮 Solana Detector</div>
+            <div class="status-badge">
+                <span class="status-dot"></span>
+                <span id="lastUpdate">Connecting…</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="auto-refresh-toggle">
+                <span>Auto-refresh</span>
+                <div class="toggle-switch active" id="autoRefreshToggle" onclick="toggleAutoRefresh()"></div>
+            </div>
+            <button class="refresh-btn" onclick="refreshAll()">
+                🔄 Refresh
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container">
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('overview')">📊 Overview</button>
+            <button class="tab" onclick="switchTab('signals')">⚡ Signals</button>
+            <button class="tab" onclick="switchTab('tokens')">🪙 Tokens</button>
+            <button class="tab" onclick="switchTab('wallets')">👛 Wallets</button>
+            <button class="tab" onclick="switchTab('actions')">⚙️ Actions</button>
+        </div>
+
+        <!-- OVERVIEW SECTION -->
+        <div class="section active" id="section-overview">
+            <div class="kpi-grid" id="kpiGrid">
+                <div class="kpi-card">
+                    <div class="kpi-label">Tokens Tracked</div>
+                    <div class="kpi-value" id="kpiTokens">—</div>
+                    <div class="kpi-sub">Active tokens in DB</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Wallets Profiled</div>
+                    <div class="kpi-value" id="kpiWallets">—</div>
+                    <div class="kpi-sub" id="kpiSmartSub">Loading…</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Smart Wallets</div>
+                    <div class="kpi-value" id="kpiSmart">—</div>
+                    <div class="kpi-sub">ROI &gt; 2.5x, WR &gt; 40%</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Signals Generated</div>
+                    <div class="kpi-value" id="kpiSignals">—</div>
+                    <div class="kpi-sub">Total alerts triggered</div>
+                </div>
+            </div>
+
+            <div class="cluster-grid" id="clusterGrid"></div>
+
+            <div class="table-container">
+                <div class="table-header">
+                    <div class="table-title">🕐 Last Cycle Info</div>
+                    <div class="last-update" id="cycleTime">—</div>
+                </div>
+                <div style="padding: 20px; color: var(--text-secondary); font-size: 14px;" id="cycleInfo">
+                    Loading cycle data…
+                </div>
+            </div>
+        </div>
+
+        <!-- SIGNALS SECTION -->
+        <div class="section" id="section-signals">
+            <div class="table-container">
+                <div class="table-header">
+                    <div class="table-title">⚡ Detected Signals</div>
+                    <div class="last-update" id="signalsCount">—</div>
+                </div>
+                <div id="signalsContent">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Token</th>
+                                <th>Instability</th>
+                                <th>Price</th>
+                                <th>Liquidity</th>
+                                <th>Market Cap</th>
+                                <th>Time</th>
+                                <th>AI Analyst</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="signalsTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- TOKENS SECTION -->
+        <div class="section" id="section-tokens">
+            <div class="table-container">
+                <div class="table-header">
+                    <div class="table-title">🪙 Tracked Tokens</div>
+                    <div class="last-update" id="tokensCount">—</div>
+                </div>
+                <div id="tokensContent">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Token</th>
+                                <th>Price</th>
+                                <th>Market Cap</th>
+                                <th>Liquidity</th>
+                                <th>Holders</th>
+                                <th>Vol 5m</th>
+                                <th>B/S 5m</th>
+                                <th>II Score</th>
+                                <th>AI Analyst</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tokensTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- WALLETS SECTION -->
+        <div class="section" id="section-wallets">
+            <div class="table-container">
+                <div class="table-header">
+                    <div class="table-title">👛 Wallet Performance</div>
+                    <div class="last-update" id="walletsCount">—</div>
+                </div>
+                <div id="walletsContent">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Wallet</th>
+                                <th>Avg ROI</th>
+                                <th>Total Trades</th>
+                                <th>Win Rate</th>
+                                <th>Cluster</th>
+                                <th>Last Active</th>
+                            </tr>
+                        </thead>
+                        <tbody id="walletsTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ACTIONS SECTION -->
+        <div class="section" id="section-actions">
+            <div class="actions-grid">
+                <div class="action-card">
+                    <h3>🌱 Seed Wallets</h3>
+                    <p>Analyze trending Solana tokens and populate the wallet_performance table with fresh data from
+                        Helius.</p>
+                    <button class="action-btn primary" id="seedBtn" onclick="runAction('seed-wallets', this)">
+                        🚀 Run Seed Script
+                    </button>
+                </div>
+                <div class="action-card">
+                    <h3>🔄 Refresh Smart Wallets</h3>
+                    <p>Re-query the database to update the smart wallet list based on current performance criteria.</p>
+                    <button class="action-btn secondary" id="refreshWalletsBtn"
+                        onclick="runAction('refresh-wallets', this)">
+                        🧠 Refresh Wallet List
+                    </button>
+                </div>
+                <div class="action-card">
+                    <h3>📊 Refresh Dashboard</h3>
+                    <p>Reload all dashboard data from the database. Also triggered automatically every 30 seconds when
+                        auto-refresh is on.</p>
+                    <button class="action-btn secondary" onclick="refreshAll()">
+                        🔄 Reload Now
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- AI Analyst Modal -->
+    <div class="modal-overlay" id="analystModal" onclick="if(event.target === this) closeAnalyst()">
+        <div class="modal">
+            <button class="modal-close" onclick="closeAnalyst()">&times;</button>
+            <div class="verdict-header">
+                <div class="verdict-title" id="analystTokenName">Analysing...</div>
+                <div id="analystVerdict" class="verdict-badge">---</div>
+            </div>
+
+            <div class="analysis-section">
+                <div class="analysis-label">AI Degen Score</div>
+                <div class="kpi-value" id="analystScore" style="font-size: 40px;">0</div>
+                <div class="rating-bar">
+                    <div class="rating-progress" id="analystProgress"></div>
+                </div>
+            </div>
+
+            <div class="analysis-section">
+                <div class="analysis-label">Verdict Summary</div>
+                <div class="analysis-text" id="analystSummary">...</div>
+            </div>
+
+            <div class="analysis-section">
+                <div class="analysis-label">Top Risks</div>
+                <ul class="risk-list" id="analystRisks"></ul>
+            </div>
+
+            <button class="action-btn primary" id="analystBuyBtn" onclick="" style="margin-top: 20px;">
+                🚀 Open Jupiter to Trade
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // ── State ──────────────────────────────────────────────────────────────────
+        let autoRefresh = true;
+        let refreshInterval = null;
+
+        // ── Tab Navigation ─────────────────────────────────────────────────────────
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(`section-${tab}`).classList.add('active');
+        }
+
+        // ── Auto Refresh ───────────────────────────────────────────────────────────
+        function toggleAutoRefresh() {
+            autoRefresh = !autoRefresh;
+            const toggle = document.getElementById('autoRefreshToggle');
+            toggle.classList.toggle('active', autoRefresh);
+            if (autoRefresh) {
+                startAutoRefresh();
+            } else {
+                clearInterval(refreshInterval);
+            }
+        }
+
+        function startAutoRefresh() {
+            clearInterval(refreshInterval);
+            refreshInterval = setInterval(refreshAll, 30000);
+        }
+
+        // ── Data Loading ───────────────────────────────────────────────────────────
+        async function fetchAPI(endpoint) {
+            try {
+                const resp = await fetch(endpoint);
+                return await resp.json();
+            } catch (e) {
+                console.error(`API error: ${endpoint}`, e);
+                return null;
+            }
+        }
+
+        async function loadOverview() {
+            const data = await fetchAPI('/api/overview');
+            if (!data) return;
+
+            document.getElementById('kpiTokens').textContent = data.tokens_tracked.toLocaleString();
+            document.getElementById('kpiWallets').textContent = data.wallets_profiled.toLocaleString();
+            document.getElementById('kpiSmart').textContent = data.smart_wallets.toLocaleString();
+            document.getElementById('kpiSignals').textContent = data.total_signals.toLocaleString();
+            document.getElementById('kpiSmartSub').textContent =
+                `${data.smart_wallets} smart wallets detected`;
+
+            // Last cycle
+            if (data.last_cycle) {
+                const dt = new Date(data.last_cycle);
+                document.getElementById('cycleTime').textContent = dt.toLocaleString();
+                document.getElementById('cycleInfo').textContent =
+                    `Last data recorded: ${dt.toLocaleString()}`;
+            }
+
+            // Clusters
+            const clusterGrid = document.getElementById('clusterGrid');
+            const icons = { retail: '👤', sniper: '🎯', insider: '🔥', unknown: '❓' };
+            clusterGrid.innerHTML = Object.entries(data.clusters || {}).map(([label, count]) => `
+            <div class="cluster-chip">
+                <div class="cluster-icon ${label}">${icons[label] || '❓'}</div>
+                <div>
+                    <div class="cluster-label">${label.charAt(0).toUpperCase() + label.slice(1)}</div>
+                    <div class="cluster-count">${count}</div>
+                </div>
+            </div>
+        `).join('');
+
+            // Update header
+            document.getElementById('lastUpdate').textContent =
+                `Updated ${new Date().toLocaleTimeString()}`;
+        }
+
+        async function loadSignals() {
+            const data = await fetchAPI('/api/signals');
+            if (!data) return;
+
+            const tbody = document.getElementById('signalsTable');
+            document.getElementById('signalsCount').textContent =
+                `${data.signals.length} signal(s)`;
+
+            if (data.signals.length === 0) {
+                tbody.innerHTML = `
+                <tr><td colspan="7">
+                    <div class="empty-state">
+                        <div class="icon">🔍</div>
+                        <h3>No signals yet</h3>
+                        <p>The bot needs more cycles to detect anomalies. Keep it running!</p>
+                    </div>
+                </td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = data.signals.map(s => `
+            <tr>
+                <td>
+                    <div class="token-info">
+                        <span class="token-name">${s.token_symbol}</span>
+                        <span class="token-address">${s.token_address.slice(0, 8)}…</span>
+                    </div>
+                </td>
+                <td><span class="score-badge ${getScoreClass(s.instability_index)}">${s.instability_index.toFixed(3)}</span></td>
+                <td class="mono">$${formatNum(s.entry_price)}</td>
+                <td class="mono">$${formatNum(s.liquidity)}</td>
+                <td class="mono">$${formatNum(s.marketcap)}</td>
+                <td class="last-update">${formatTime(s.timestamp)}</td>
+                <td>
+                    <button class="analyst-btn" onclick="openAnalyst('${s.token_address}', '${s.token_symbol}')">
+                        🧠 Analyze
+                    </button>
+                </td>
+                <td>
+                    <a href="${s.buy_url}" target="_blank" class="buy-btn">
+                        🚀 Buy
+                    </a>
+                </td>
+            </tr>
+        `).join('');
+        }
+
+        async function loadTokens() {
+            const data = await fetchAPI('/api/tokens');
+            if (!data) return;
+
+            const tbody = document.getElementById('tokensTable');
+            document.getElementById('tokensCount').textContent =
+                `${data.tokens.length} token(s)`;
+
+            if (data.tokens.length === 0) {
+                tbody.innerHTML = `
+                <tr><td colspan="9">
+                    <div class="empty-state">
+                        <div class="icon">🪙</div>
+                        <h3>No tokens tracked yet</h3>
+                        <p>Start the bot to begin discovering tokens.</p>
+                    </div>
+                </td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = data.tokens.map(t => `
+            <tr>
+                <td>
+                    <div class="token-info">
+                        <span class="token-name">${t.symbol}</span>
+                        <span class="token-address">${t.address.slice(0, 8)}…${t.address.slice(-4)}</span>
+                    </div>
+                </td>
+                <td class="mono">$${formatNum(t.price)}</td>
+                <td class="mono">$${formatNum(t.marketcap)}</td>
+                <td class="mono">$${formatNum(t.liquidity)}</td>
+                <td class="mono">${t.holders.toLocaleString()}</td>
+                <td class="mono">$${formatNum(t.volume_5m)}</td>
+                <td>
+                    <span class="positive">${t.buys_5m}</span> /
+                    <span class="negative">${t.sells_5m}</span>
+                </td>
+                <td><span class="score-badge ${getScoreClass(t.instability_index)}">${t.instability_index.toFixed(3)}</span></td>
+                <td>
+                    <button class="analyst-btn" onclick="openAnalyst('${t.address}', '${t.symbol}')">
+                        🧠 Analyze
+                    </button>
+                </td>
+                <td>
+                    <a href="${t.buy_url}" target="_blank" class="buy-btn">
+                        🚀 Buy
+                    </a>
+                </td>
+            </tr>
+        `).join('');
+        }
+
+        async function loadWallets() {
+            const data = await fetchAPI('/api/wallets');
+            if (!data) return;
+
+            const tbody = document.getElementById('walletsTable');
+            document.getElementById('walletsCount').textContent =
+                `${data.wallets.length} wallet(s)`;
+
+            if (data.wallets.length === 0) {
+                tbody.innerHTML = `
+                <tr><td colspan="6">
+                    <div class="empty-state">
+                        <div class="icon">👛</div>
+                        <h3>No wallets profiled</h3>
+                        <p>Run the Seed Wallets action to populate wallet data.</p>
+                    </div>
+                </td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = data.wallets.map(w => `
+            <tr>
+                <td class="token-address">${w.wallet.slice(0, 8)}…${w.wallet.slice(-6)}</td>
+                <td class="mono ${w.avg_roi > 1 ? 'positive' : 'negative'}">${w.avg_roi.toFixed(2)}x</td>
+                <td class="mono">${w.total_trades}</td>
+                <td class="mono">${(w.win_rate * 100).toFixed(1)}%</td>
+                <td><span class="label label-${w.cluster_label}">${w.cluster_label}</span></td>
+                <td class="last-update">${w.last_active ? formatTime(w.last_active) : '—'}</td>
+            </tr>
+        `).join('');
+        }
+
+        // ── AI Analyst ────────────────────────────────────────────────────────────
+        async function openAnalyst(address, symbol) {
+            const modal = document.getElementById('analystModal');
+            modal.style.display = 'flex';
+
+            // Reset modal state
+            document.getElementById('analystTokenName').textContent = `AI Analysis of ${symbol}`;
+            document.getElementById('analystVerdict').textContent = 'WAIT';
+            document.getElementById('analystVerdict').className = 'verdict-badge v-WAIT';
+            document.getElementById('analystScore').textContent = '...';
+            document.getElementById('analystProgress').style.width = '0%';
+            document.getElementById('analystSummary').textContent = 'Scanning on-chain signals with Gemini 1.5 Flash...';
+            document.getElementById('analystRisks').innerHTML = '';
+            document.getElementById('analystBuyBtn').onclick = () => window.open(`https://jup.ag/swap/SOL-${address}`, '_blank');
+
+            const data = await fetchAPI(`/api/analyze/${address}`);
+            if (!data) {
+                showToast('Analysis failed', 'error');
+                closeAnalyst();
+                return;
+            }
+
+            // Update UI with AI results
+            document.getElementById('analystVerdict').textContent = data.verdict;
+            document.getElementById('analystVerdict').className = `verdict-badge v-${data.verdict}`;
+            document.getElementById('analystScore').textContent = data.rating;
+
+            const scoreColor = data.rating > 7 ? 'var(--green)' : data.rating > 4 ? 'var(--yellow)' : 'var(--red)';
+            document.getElementById('analystScore').style.color = scoreColor;
+            document.getElementById('analystProgress').style.width = `${data.rating * 10}%`;
+            document.getElementById('analystProgress').style.background = scoreColor;
+
+            document.getElementById('analystSummary').textContent = data.summary;
+            document.getElementById('analystRisks').innerHTML = (data.risks || []).map(r => `
+            <li class="risk-item">${r}</li>
+        `).join('');
+        }
+
+        function closeAnalyst() {
+            document.getElementById('analystModal').style.display = 'none';
+        }
+
+        // ── Actions ────────────────────────────────────────────────────────────────
+        async function runAction(action, btn) {
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Running…';
+
+            try {
+                const resp = await fetch(`/api/actions/${action}`, { method: 'POST' });
+                const data = await resp.json();
+                showToast(data.message || `Action "${action}" completed`, 'success');
+                setTimeout(refreshAll, 2000);
+            } catch (e) {
+                showToast(`Error running ${action}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
+        // ── Utilities ──────────────────────────────────────────────────────────────
+        function formatNum(n) {
+            if (n === 0 || n === null || n === undefined) return '0.00';
+            if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+            if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+            if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K';
+            if (n >= 1) return n.toFixed(2);
+            if (n >= 0.001) return n.toFixed(4);
+            return n.toExponential(2);
+        }
+
+        function formatTime(iso) {
+            if (!iso) return '—';
+            const d = new Date(iso);
+            const now = new Date();
+            const diff = (now - d) / 1000;
+            if (diff < 60) return `${Math.floor(diff)}s ago`;
+            if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+            if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+            return d.toLocaleDateString();
+        }
+
+        function getScoreClass(score) {
+            if (score >= 3) return 'score-high';
+            if (score >= 1) return 'score-medium';
+            return 'score-low';
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 4000);
+        }
+
+        // ── Refresh All ────────────────────────────────────────────────────────────
+        async function refreshAll() {
+            await Promise.all([
+                loadOverview(),
+                loadSignals(),
+                loadTokens(),
+                loadWallets(),
+            ]);
+        }
+
+        // ── Init ───────────────────────────────────────────────────────────────────
+        refreshAll();
+        startAutoRefresh();
+    </script>
+
+</body>
+
+</html>

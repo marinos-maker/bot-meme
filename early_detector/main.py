@@ -19,12 +19,13 @@ from early_detector.config import SCAN_INTERVAL, LOG_FILE, LOG_ROTATION, LOG_LEV
 from early_detector.collector import fetch_new_tokens, fetch_token_metrics
 from early_detector.db import (
     get_pool, close_pool, upsert_token, insert_metrics,
-    get_recent_metrics, get_smart_wallets,
+    get_recent_metrics, get_smart_wallets, get_tracked_tokens, upsert_wallet,
 )
 from early_detector.features import compute_all_features
-from early_detector.smart_wallets import compute_swr
+from early_detector.smart_wallets import compute_swr, cluster_wallets
 from early_detector.scoring import compute_instability, get_signal_threshold
 from early_detector.signals import process_signals
+from early_detector.helius_client import fetch_token_swaps, compute_wallet_performance
 
 
 # ── Logging Setup ─────────────────────────────────────────────────────────────
@@ -36,7 +37,7 @@ async def scan_cycle(session: aiohttp.ClientSession,
                      smart_wallet_list: list[str]) -> None:
     """Execute one full scan cycle."""
     # 1. Discover tokens
-    new_tokens = await fetch_new_tokens(session, limit=50)
+    new_tokens = await fetch_new_tokens(session, limit=25)
     logger.info(f"Discovered {len(new_tokens)} tokens to scan")
 
     if not new_tokens:
@@ -59,20 +60,20 @@ async def scan_cycle(session: aiohttp.ClientSession,
         history = await get_recent_metrics(token_id, minutes=30)
 
         # Extract holder timeline for acceleration
-        holders_series = [r.get("holders", 0) for r in history]
-        h_t = metrics.get("holders", 0) or 0
+        holders_series = [(r.get("holders") or 0) for r in history]
+        h_t = metrics.get("holders") or 0
         h_t10 = holders_series[min(10, len(holders_series)-1)] if len(holders_series) > 1 else h_t
         h_t20 = holders_series[min(20, len(holders_series)-1)] if len(holders_series) > 2 else h_t10
 
         # Price series for volatility
-        price_history = [r.get("price", 0) for r in history if r.get("price")]
-        current_price = metrics.get("price", 0) or 0
+        price_history = [(r.get("price") or 0) for r in history if r.get("price")]
+        current_price = metrics.get("price") or 0
         price_20m = np.array(price_history[:20]) if len(price_history) >= 2 else np.array([current_price])
         price_5m = np.array(price_history[:5]) if len(price_history) >= 2 else np.array([current_price])
 
         # Accumulation stats from history
-        buys_20m = sum(r.get("buys_5m", 0) or 0 for r in history[:4])
-        sells_20m = sum(r.get("sells_5m", 0) or 0 for r in history[:4])
+        buys_20m = sum((r.get("buys_5m") or 0) for r in history[:4])
+        sells_20m = sum((r.get("sells_5m") or 0) for r in history[:4])
         unique_buyers = buys_20m  # approximation (exact count requires tx-level data)
 
         # Smart Wallet Rotation
@@ -100,8 +101,8 @@ async def scan_cycle(session: aiohttp.ClientSession,
         features["name"] = tok.get("name", "Unknown")
         features["symbol"] = tok.get("symbol", "???")
         features["price"] = current_price
-        features["liquidity"] = metrics.get("liquidity", 0)
-        features["marketcap"] = metrics.get("marketcap", 0)
+        features["liquidity"] = metrics.get("liquidity") or 0
+        features["marketcap"] = metrics.get("marketcap") or 0
         features["top10_ratio"] = metrics.get("top10_ratio")
 
         features_rows.append(features)
@@ -153,8 +154,12 @@ async def run() -> None:
                 except Exception as e:
                     logger.error(f"Cycle {cycle} error: {e}")
 
-                # Refresh smart wallet list every 10 cycles
+                # Update wallet profiles and refresh smart wallets every 10 cycles (~20 min)
                 if cycle % 10 == 0:
+                    try:
+                        await update_wallet_profiles(session)
+                    except Exception as e:
+                        logger.error(f"Wallet profile update error: {e}")
                     smart_wallet_list = await get_smart_wallets()
                     logger.info(f"Refreshed smart wallet list: {len(smart_wallet_list)}")
 
@@ -162,6 +167,49 @@ async def run() -> None:
     finally:
         await close_pool()
         logger.info("Detector stopped.")
+
+
+async def update_wallet_profiles(session: aiohttp.ClientSession) -> None:
+    """Fetch recent swaps for tracked tokens and update wallet_performance."""
+    logger.info("Updating wallet profiles from on-chain data...")
+
+    token_addrs = await get_tracked_tokens(limit=15)
+    if not token_addrs:
+        logger.debug("No tracked tokens for wallet profiling")
+        return
+
+    all_trades = []
+    for addr in token_addrs:
+        trades = await fetch_token_swaps(session, addr, limit=50)
+        all_trades.extend(trades)
+        await asyncio.sleep(0.2)
+
+    if not all_trades:
+        logger.debug("No trades collected for wallet profiling")
+        return
+
+    wallet_stats = compute_wallet_performance(all_trades)
+    if not wallet_stats:
+        return
+
+    # Cluster wallets
+    stats_df = pd.DataFrame.from_dict(wallet_stats, orient="index")
+    stats_df.index.name = "wallet"
+    clustered = cluster_wallets(stats_df)
+
+    # Save to DB
+    saved = 0
+    for wallet_addr in clustered.index:
+        row = clustered.loc[wallet_addr]
+        await upsert_wallet(wallet_addr, {
+            "avg_roi": float(row["avg_roi"]),
+            "total_trades": int(row["total_trades"]),
+            "win_rate": float(row["win_rate"]),
+            "cluster_label": row.get("cluster_label", "unknown"),
+        })
+        saved += 1
+
+    logger.info(f"Updated {saved} wallet profiles")
 
 
 if __name__ == "__main__":

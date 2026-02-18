@@ -15,6 +15,9 @@ BIRDEYE_API_KEY: str = os.getenv("BIRDEYE_API_KEY", "")
 DEXSCREENER_API_URL: str = os.getenv(
     "DEXSCREENER_API_URL", "https://api.dexscreener.com/latest"
 )
+HELIUS_API_KEY: str = os.getenv("HELIUS_API_KEY", "")
+HELIUS_BASE_URL: str = "https://api.helius.xyz"
+GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -41,7 +44,8 @@ SW_MIN_TRADES: int = 15
 SW_MIN_WIN_RATE: float = 0.4
 
 # ── Timing ────────────────────────────────────────────────────────────────────
-SCAN_INTERVAL: int = int(os.getenv("SCAN_INTERVAL", "60"))  # seconds
+SCAN_INTERVAL: int = int(os.getenv("SCAN_INTERVAL", "120"))  # seconds (120s to respect Birdeye free tier)
+DASHBOARD_PORT: int = int(os.getenv("DASHBOARD_PORT", "8050"))
 
 # ── Safety Filters ────────────────────────────────────────────────────────────
 MAX_TOP5_HOLDER_RATIO: float = 0.40
@@ -50,7 +54,11 @@ SPIKE_THRESHOLD: float = 3.0   # 3x in 5 min = too late
 
 # ── Birdeye API ───────────────────────────────────────────────────────────────
 BIRDEYE_BASE_URL: str = "https://public-api.birdeye.so"
-BIRDEYE_HEADERS: dict = {"X-API-KEY": BIRDEYE_API_KEY}
+BIRDEYE_HEADERS: dict = {
+    "X-API-KEY": BIRDEYE_API_KEY,
+    "x-chain": "solana",
+    "accept": "application/json",
+}
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_FILE: str = "logs/runtime.log"

@@ -11,8 +11,8 @@ from early_detector.config import (
     DEXSCREENER_API_URL,
 )
 
-# Rate limiter: max 5 requests / second to Birdeye
-_semaphore = asyncio.Semaphore(5)
+# Rate limiter: max 2 concurrent requests to Birdeye (free tier is limited)
+_semaphore = asyncio.Semaphore(2)
 
 
 # ── Birdeye ───────────────────────────────────────────────────────────────────
@@ -26,6 +26,7 @@ async def fetch_token_overview(session: aiohttp.ClientSession,
         try:
             async with session.get(url, headers=BIRDEYE_HEADERS,
                                    params=params, timeout=10) as resp:
+                await asyncio.sleep(0.5)  # pace requests for free tier
                 if resp.status != 200:
                     logger.warning(f"Birdeye overview {resp.status} for {token_address}")
                     return None
@@ -52,16 +53,17 @@ async def fetch_new_tokens(session: aiohttp.ClientSession,
     """Fetch recently created tokens from Birdeye."""
     url = f"{BIRDEYE_BASE_URL}/defi/tokenlist"
     params = {
-        "sort_by": "created_at",
+        "sort_by": "v24hChangePercent",
         "sort_type": "desc",
         "offset": 0,
         "limit": limit,
-        "chain": "solana",
+        "min_liquidity": 100,
     }
     async with _semaphore:
         try:
             async with session.get(url, headers=BIRDEYE_HEADERS,
                                    params=params, timeout=15) as resp:
+                await asyncio.sleep(0.5)  # pace requests for free tier
                 if resp.status != 200:
                     logger.warning(f"Birdeye tokenlist status {resp.status}")
                     return []
@@ -90,6 +92,7 @@ async def fetch_top_holders(session: aiohttp.ClientSession,
         try:
             async with session.get(url, headers=BIRDEYE_HEADERS,
                                    params=params, timeout=10) as resp:
+                await asyncio.sleep(0.5)  # pace requests for free tier
                 if resp.status != 200:
                     return None
                 body = await resp.json()
@@ -136,20 +139,21 @@ async def fetch_dexscreener_pair(session: aiohttp.ClientSession,
 async def fetch_token_metrics(session: aiohttp.ClientSession,
                               token_address: str) -> dict | None:
     """
-    Fetch metrics from Birdeye first; fallback to DexScreener on failure.
-    Enriches with top holder ratio.
+    Fetch metrics from DexScreener first (no strict rate limit);
+    fallback to Birdeye on failure. Enriches with top holder ratio.
     """
-    metrics = await fetch_token_overview(session, token_address)
+    # DexScreener as primary (no strict rate limit)
+    metrics = await fetch_dexscreener_pair(session, token_address)
 
-    # Fallback to DexScreener if Birdeye fails
+    # Fallback to Birdeye if DexScreener fails
     if metrics is None:
-        logger.debug(f"Falling back to DexScreener for {token_address}")
-        metrics = await fetch_dexscreener_pair(session, token_address)
+        logger.debug(f"Falling back to Birdeye for {token_address}")
+        metrics = await fetch_token_overview(session, token_address)
 
     if metrics is None:
         return None
 
-    # Enrich with top holder ratio
+    # Enrich with top holder ratio (Birdeye only)
     top10 = await fetch_top_holders(session, token_address)
     if top10 is not None:
         metrics["top10_ratio"] = top10
