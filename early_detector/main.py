@@ -456,7 +456,11 @@ async def run() -> None:
         consumers = [asyncio.create_task(processor_worker_batch(i, session)) for i in range(3)]
         cron_jobs = [asyncio.create_task(update_wallet_profiles_job(session))]
         
-        await asyncio.gather(*producers, *consumers, *cron_jobs)
+        try:
+            await asyncio.gather(*producers, *consumers, *cron_jobs)
+        finally:
+            from early_detector.db import close_pool
+            await close_pool()
 
 
 
