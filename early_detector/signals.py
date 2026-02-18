@@ -14,6 +14,7 @@ from early_detector.config import (
     TELEGRAM_CHAT_ID,
 )
 from early_detector.db import insert_signal, has_recent_signal
+from early_detector.optimization import AlphaEngine
 
 
 def passes_trigger(token: dict, threshold: float) -> bool:
@@ -28,9 +29,17 @@ def passes_trigger(token: dict, threshold: float) -> bool:
     liq = token.get("liquidity", 0) or 0
     mcap = token.get("marketcap", float("inf")) or float("inf")
     top10 = token.get("top10_ratio")
+    
+    delta_ii = token.get("delta_instability", 0)
 
     if ii <= threshold:
         return False
+    
+    # Momentum Check: Only trigger if instability is RISING
+    if delta_ii <= 0:
+        logger.debug(f"Trigger rejected: Falling instability (dII={delta_ii:.3f})")
+        return False
+
     if liq < LIQUIDITY_MIN:
         return False
     if mcap > MCAP_MAX:
@@ -44,10 +53,23 @@ def passes_trigger(token: dict, threshold: float) -> bool:
 def passes_safety_filters(token: dict) -> bool:
     """
     Safety filters — reject token if:
+    - High Insider Probability (> 0.8)
     - Top 5 holders > 40%
     - Dev wallet active in last 10 min (placeholder — requires on-chain data)
     - Sudden 3x spike in 5 min (too late)
     """
+    # Insider Risk Check
+    insider_psi = token.get("insider_psi", 0.0)
+    if insider_psi > 0.8:
+        logger.info(f"Safety: High Insider Probability ({insider_psi:.2f}) — REJECTED")
+        return False
+        
+    # Creator Risk Check
+    creator_risk = token.get("creator_risk_score", 0.5)
+    if creator_risk > 0.4:
+        logger.info(f"Safety: High Creator Risk ({creator_risk:.2f}) — REJECTED")
+        return False
+
     top10 = token.get("top10_ratio")
     if top10 is not None and top10 > MAX_TOP5_HOLDER_RATIO:
         logger.debug(f"Safety: holder concentration too high ({top10:.1%})")
@@ -97,6 +119,26 @@ async def process_signals(scored_df, threshold: float) -> list[dict]:
         if await has_recent_signal(token_id, minutes=60):
             continue
 
+        # ── Alpha Optimization (Phase 10) ──
+        # Calculate Bayesian Confidence
+        # Base prior from II (e.g. 0.3-0.7 scale)
+        prior = np.clip(token_data.get("instability", 0) / 5.0, 0.3, 0.7)
+        
+        # Likelihoods based on security and momentum
+        likelihoods = []
+        if token_data.get("creator_risk_score", 0.5) < 0.2: likelihoods.append(1.5)
+        if token_data.get("insider_psi", 0.0) < 0.1: likelihoods.append(1.3)
+        if token_data.get("accel_liq", 0) > 0: likelihoods.append(1.2)
+        
+        confidence = AlphaEngine.calculate_bayesian_confidence(prior, likelihoods)
+        
+        # Calculate Kelly Size (assuming 2.0x avg win, 0.25 fractional kelly)
+        kelly_size = AlphaEngine.calculate_kelly_size(
+            win_prob=confidence, 
+            avg_win_multiplier=2.0, 
+            fractional_kelly=0.25
+        )
+
         signal = {
             "token_id": token_data.get("token_id"),
             "address": token_data.get("address", ""),
@@ -106,6 +148,10 @@ async def process_signals(scored_df, threshold: float) -> list[dict]:
             "price": token_data.get("price", 0),
             "liquidity": token_data.get("liquidity", 0),
             "marketcap": token_data.get("marketcap", 0),
+            "confidence": confidence,
+            "kelly_size": kelly_size,
+            "insider_psi": token_data.get("insider_psi", 0.0),
+            "creator_risk": token_data.get("creator_risk_score", 0.0),
         }
 
         # Save to DB
@@ -115,6 +161,10 @@ async def process_signals(scored_df, threshold: float) -> list[dict]:
             entry_price=signal["price"],
             liquidity=signal["liquidity"],
             marketcap=signal["marketcap"],
+            confidence=signal["confidence"],
+            kelly_size=signal["kelly_size"],
+            insider_psi=signal["insider_psi"],
+            creator_risk=signal["creator_risk"],
         )
 
         # Send notification
@@ -145,6 +195,10 @@ async def send_telegram_alert(signal: dict) -> None:
         f"💰 Price: <code>${signal['price']:.8f}</code>\n"
         f"💧 Liquidity: <code>${signal['liquidity']:,.0f}</code>\n"
         f"📈 Market Cap: <code>${signal['marketcap']:,.0f}</code>\n"
+        f"\n"
+        f"🎯 <b>Probability Score:</b> <code>{signal['confidence']:.1%}</code>\n"
+        f"⚖️ <b>Recommended Size:</b> <code>{signal['kelly_size']:.1%} of Wallet</code>\n"
+        f"🔥 <b>Insider Risk:</b> <code>{signal['insider_psi']:.2f}</code>\n"
         f"\n"
         f"🔗 <a href='https://birdeye.so/token/{signal.get('address', '')}?chain=solana'>Birdeye</a>"
         f" | <a href='https://dexscreener.com/solana/{signal.get('address', '')}'>DexScreener</a>"

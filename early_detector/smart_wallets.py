@@ -100,3 +100,68 @@ def compute_swr(active_wallets: list[str],
     """
     sw_active = len(set(active_wallets) & set(smart_wallet_list))
     return sw_active / (global_active_smart + 1e-9)
+
+
+def detect_coordinated_entry(trades: list[dict], window_sec: int = 15) -> list[str]:
+    """
+    Detects coordinated entries (Louvain-lite).
+    Identifies groups of wallets that buy within the same narrow time window.
+    returns list of 'coordinated' wallet addresses.
+    """
+    if len(trades) < 2:
+        return []
+
+    # Sort by timestamp (or first_trade_time if passing a buyer list)
+    key_fn = lambda x: x.get("timestamp") or x.get("first_trade_time") or 0
+    sorted_trades = sorted([t for t in trades if t.get("type", "buy") == "buy"], 
+                           key=key_fn)
+    
+    coordinated = set()
+    for i in range(len(sorted_trades)):
+        for j in range(i + 1, len(sorted_trades)):
+            t_i = sorted_trades[i].get("timestamp") or sorted_trades[i].get("first_trade_time") or 0
+            t_j = sorted_trades[j].get("timestamp") or sorted_trades[j].get("first_trade_time") or 0
+            if abs(t_i - t_j) <= window_sec:
+                coordinated.add(sorted_trades[i]["wallet"])
+                coordinated.add(sorted_trades[j]["wallet"])
+            else:
+                break # sorted
+    
+    return list(coordinated)
+
+
+def compute_insider_score(wallet_stats: dict,
+                          first_trade_timestamp: int,
+                          pair_created_at: int | None,
+                          is_coordinated: bool = False) -> float:
+    """
+    Calculate probability (0.0 - 1.0) that a wallet is an insider.
+    Heuristics refined for Phase 2 Cleanup.
+    """
+    score = 0.0
+
+    # 1. Early Entry Bonus (Launches are volatile)
+    if pair_created_at:
+        created_sec = pair_created_at / 1000 if pair_created_at > 1e11 else pair_created_at
+        trade_sec = first_trade_timestamp
+        seconds_since_launch = trade_sec - created_sec
+        
+        if 0 <= seconds_since_launch <= 60:    # < 1 min (Extreme Early)
+            score += 0.5
+        elif 60 < seconds_since_launch <= 300: # 1-5 min
+            score += 0.3
+
+    # 2. Fresh Wallet / No History
+    if wallet_stats.get("total_trades", 0) < 3:
+        score += 0.4
+    
+    # 3. Coordination Bonus (Phase 2 Cleanup)
+    if is_coordinated:
+        logger.debug(f"Insider Score: Coordination bonus applied (+0.3)")
+        score += 0.3
+
+    # 4. Success Proxy
+    if wallet_stats.get("win_rate", 0) > 0.7 and wallet_stats.get("total_trades", 0) > 5:
+        score += 0.2
+
+    return min(1.0, score)

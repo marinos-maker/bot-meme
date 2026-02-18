@@ -10,7 +10,8 @@ from early_detector.config import (
     BIRDEYE_HEADERS,
     DEXSCREENER_API_URL,
 )
-from early_detector.helius_client import check_token_security, get_real_unique_buyers
+from early_detector.helius_client import check_token_security, get_buyers_stats, fetch_creator_history
+from early_detector.cache import cache
 
 # Rate limiter: max 2 concurrent requests to Birdeye (free tier is limited)
 _semaphore = asyncio.Semaphore(2)
@@ -21,6 +22,11 @@ _semaphore = asyncio.Semaphore(2)
 async def fetch_token_overview(session: aiohttp.ClientSession,
                                token_address: str) -> dict | None:
     """Fetch token overview from Birdeye (price, mcap, liquidity, holders)."""
+    # 1. Check Cache
+    cached = cache.get(f"birdeye:{token_address}")
+    if cached:
+        return cached
+
     url = f"{BIRDEYE_BASE_URL}/defi/token_overview"
     params = {"address": token_address}
     async with _semaphore:
@@ -33,7 +39,8 @@ async def fetch_token_overview(session: aiohttp.ClientSession,
                     return None
                 body = await resp.json()
                 d = body.get("data", {})
-                return {
+                
+                result = {
                     "price": d.get("price"),
                     "marketcap": d.get("mc"),
                     "liquidity": d.get("liquidity"),
@@ -44,6 +51,8 @@ async def fetch_token_overview(session: aiohttp.ClientSession,
                     "sells_5m": d.get("sell5m"),
                     "top10_ratio": None,  # enriched separately
                 }
+                cache.set(f"birdeye:{token_address}", result, ttl_seconds=60)
+                return result
         except Exception as e:
             logger.error(f"Birdeye fetch error for {token_address}: {e}")
             return None
@@ -129,6 +138,7 @@ async def fetch_dexscreener_pair(session: aiohttp.ClientSession,
                 "volume_1h": float(pair.get("volume", {}).get("h1", 0) or 0),
                 "buys_5m": int(pair.get("txns", {}).get("m5", {}).get("buys", 0) or 0),
                 "sells_5m": int(pair.get("txns", {}).get("m5", {}).get("sells", 0) or 0),
+                "pair_created_at": pair.get("pairCreatedAt"),
             }
     except Exception as e:
         logger.error(f"DexScreener fetch error for {token_address}: {e}")
@@ -165,8 +175,20 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
     metrics["freeze_authority"] = security.get("freeze_authority")
 
     # Enrich with Unique Buyers (simulated real-time stealth accumulation)
-    unique_buyers = await get_real_unique_buyers(session, token_address, limit=50)
-    metrics["unique_buyers_50tx"] = unique_buyers
+    buyers_data = await get_buyers_stats(session, token_address, limit=50)
+    metrics["unique_buyers_50tx"] = buyers_data["count"]
+    metrics["buyers_data"] = buyers_data["buyers"]  # Pass full list for Insider Scoring
+
+    # Creator Risk Analysis
+    creator = security.get("creator")
+    if creator:
+        # Check risk only if we have a creator address
+        risk_score = await fetch_creator_history(session, creator)
+        metrics["creator_risk_score"] = risk_score
+        metrics["creator_address"] = creator
+    else:
+        metrics["creator_risk_score"] = 0.5 # Unknown
+        metrics["creator_address"] = None
 
     return metrics
 

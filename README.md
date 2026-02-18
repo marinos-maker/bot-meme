@@ -1,110 +1,77 @@
-# 🚀 Solana Early Detector — Meme Coin Pre-Pump Detection Bot
+# 🚀 Solana Early Detector v3.0 — Institutional Grade
 
-Bot Python per il rilevamento anticipato di meme coin esplosive su Solana, basato su un **Instability Index** matematico che combina smart wallet intelligence, feature engineering e scoring cross-sectional.
+Bot Python avanzato per il rilevamento di meme coin su Solana. Basato su un **Instability Index** asincrono e cross-sectional, potenziato da risk management istituzionale e intelligenza on-chain.
 
-Ora dotato di **Web Dashboard** interattiva e controlli di sicurezza on-chain avanzati tramite Helius RPC.
+## 🌟 Novità v3.0 (Institutional Grade)
 
-## Architettura
+Il sistema è stato completamente riscritto con un'architettura **Pro-Level**:
+
+### 🧠 Alpha Engine (Optimization)
+- **Bayesian Probability**: Ogni segnale riceve una "Confidence Score" (Win P) aggiornata dinamicamente.
+- **Kelly Criterion**: Calcolo della dimensione ottimale della posizione (Size) in base al rischio.
+- **Monte Carlo Simulation**: Analisi di 10.000 scenari per calcolare il VaR (Value at Risk) e il Drawdown potenziale.
+
+### 📈 Matematica Robusta (Phase 1 Cleanup)
+- **Robust Z-Scores (Median/MAD)**: Standardizzazione dei dati immune agli outlier estremi del mercato meme.
+- **Regime Detection**: Il bot rileva automaticamente stati **DEGEN** (volatili) o **STABLE** (accumulo) e adatta i pesi dello scoring in tempo reale.
+
+### 🕵️ Intelligence Specialistica (Phase 2 Cleanup)
+- **Coordinated Entry (Louvain-lite)**: Rilevamento di lanci "bundled" (wallet multipli che comprano nello stesso secondo).
+- **Insider Probability (Psi)**: Score di rischio basato sulla coordinazione e sulla "freschezza" dei wallet.
+- **Narrative Manager**: Classificazione automatica dei token (AI, Politics, Meme-Animals, ecc.) tramite analisi lessicale.
+
+## Architettura del Progetto
 
 ```
 early_detector/
-├── config.py           # Configurazione + env vars
-├── db.py               # Connessione async PostgreSQL (Supabase)
-├── collector.py        # Fetch dati Birdeye / DexScreener / Helius IO
-├── helius_client.py    # Client RPC per sicurezza e analisi transazioni
-├── features.py         # Feature engineering matematico
-├── smart_wallets.py    # Wallet analysis + KMeans clustering
-├── scoring.py          # Instability Index + z-scores
-├── signals.py          # Trigger + filtri sicurezza + Telegram
-├── analyst.py          # Integrazione AI (Gemini Flash 2.0)
-├── dashboard.py        # Web Server FastAPI (Port 8050)
-└── main.py             # Loop asincrono principale (60s)
+├── optimization.py     # Alpha Engine (Bayesian, Kelly, Monte Carlo)
+├── narrative.py        # Classificazione Narrative
+├── scoring.py          # robust z-scores + Detect Regime
+├── smart_wallets.py    # Cluster (K-Means) + Coordinated Entry
+├── analyst.py          # AI Analyst (Google Gemini 2.0 Flash)
+├── backtest.py         # Motore di simulazione storica
+├── dashboard.py        # Web Server Pro Dashboard
+└── main.py             # Orchestratore asincrono (v3.0 Async)
 ```
-
-## Nuove Funzionalità (v2.0)
-
-### 🖥️ Web Dashboard
-Un'interfaccia completa per monitorare il bot in tempo reale:
-- **Panoramica**: KPI sui token tracciati, wallet profilati e segnali generati.
-- **Segnali Live**: Lista dei token che hanno superato l'Instability Index, con analisi AI on-demand.
-- **Copy Address**: Icona per copiare rapidamente l'indirizzo del token.
-- **Auto-Refresh**: Aggiornamento automatico dei dati ogni 30 secondi.
-- **Analisi AI**: Integrazione con **Google Gemini 2.0 Flash** per un verdetto "BUY/WAIT/AVOID" basato su dati on-chain.
-
-### 🛡️ Sicurezza Avanzata (Helius RPC)
-- **Mint Authority Check**: Rileva se l'autorità di mint è ancora abilitata (rischio inflazione infinita).
-- **Freeze Authority Check**: Rileva se l'autorità di congelamento è attiva (rischio honeypot).
-- **Stealth Accumulation Reale**: Conta i *veri* buyer unici analizzando le transazioni di swap grezze, invece di approssimazioni basate sul volume.
 
 ## Quick Start
 
-### 1. Setup
-
+### 1. Installazione
 ```bash
-# Clona e entra nella directory
+git clone ...
 cd bot-meme
-
-# Crea virtual environment
 python -m venv venv
-# Attiva (Windows):
 venv\Scripts\activate
-# Attiva (Linux/Mac):
-source venv/bin/activate
-
-# Installa dipendenze
 pip install -r requirements.txt
 ```
 
-### 2. Configurazione
+### 2. Configurazione (.env)
+Configura `BIRDEYE_API_KEY`, `HELIUS_API_KEY`, `SUPABASE_DB_URL` e `GOOGLE_API_KEY`.
 
-Copia il file `.env.example` in `.env` e configura:
-
-```ini
-SUPABASE_DB_URL=postgresql://...
-BIRDEYE_API_KEY=...
-HELIUS_API_KEY=...
-GOOGLE_API_KEY=... (per AI Analyst)
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_CHAT_ID=...
+### 3. Migrazione Database
+```bash
+python migrate_sync.py
 ```
 
-### 3. Database
-
-Assicurati di aver applicato le migrazioni SQL su Supabase (vedi `migrations/`).
-
-### 4. Esecuzione
-
-Il sistema è composto da due processi principali:
-
-**1. Il Cervello (Detector Loop)**
-Analizza il mercato, calcola l'Instability Index e genera segnali.
+### 4. Avvio
 ```bash
+# Avvia il bot (Cervello)
 python -m early_detector.main
-```
 
-**2. L'Interfaccia (Web Dashboard)**
-Visualizza i dati e permette l'interazione.
-```bash
+# Avvia la dashboard (Occhi)
 python -m early_detector.dashboard
 ```
-Apri il browser su: `http://localhost:8050`
 
-## Formula Core — Instability Index
+## Dashboard Pro
+Accedi a `http://localhost:8050` per visualizzare:
+- **Heatmap di Instabilità**: Per vedere dove si concentra il volume.
+- **Narrative Flow**: Dominanza dei temi (es. AI vs Dog coins).
+- **Pro Signals**: Segnali con Win Probability, Kelly Size e Insider Risk.
 
-```
-II = 2·Z(SA) + 1.5·Z(H) + 1.5·Z(VS) + 2·Z(SWR) − 2·Z(sell_pressure)
-```
+## 🛡️ Sicurezza e Risk Management
+- **LP Lock Check**: Analisi dello stato dei pool Raydium/Pump.fun.
+- **Creator Risk**: Analisi dello storico del creatore per identificare serial ruggers.
+- **Auto-Wait**: Segnali filtrati se la Win Probability è < 60%.
 
-| Feature | Descrizione | Miglioramento v2.0 |
-|---|---|---|
-| **SA** | Stealth Accumulation | Usa conteggio reale wallet unici tramite Helius |
-| **H** | Holder Acceleration | Derivata seconda crescita holder |
-| **VS** | Volatility Shift | Compressione pre-breakout |
-| **SWR** | Smart Wallet Rotation | Analisi pattern wallet (Retail/Sniper/Insider) |
-| **Security** | Filtri Sicurezza | Scarta token con Mint/Freeze Authority attivi |
-
-Segnale quando `II > percentile_95` con filtri di sicurezza (liquidity > 40k, mcap < 3M, top10 < 35%).
-
-## ⚠️ Disclaimer
-
-Questo è un bot di **analisi e segnali**. L'uso in trading reale comporta rischi finanziari significativi. I risultati di backtest non garantiscono performance future. Indirizzi token e segnali sono a puro scopo informativo.
+---
+**⚠️ Disclaimer**: Questo software è a scopo puramente educativo. Il trading di criptovalute ad alta volatilità comporta il rischio di perdita totale del capitale.

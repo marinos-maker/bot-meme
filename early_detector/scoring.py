@@ -12,45 +12,76 @@ from early_detector.config import (
 
 
 def zscore(series: pd.Series) -> pd.Series:
-    """Cross-sectional z-score across all tokens in the current batch."""
+    """Standard z-score."""
     return (series - series.mean()) / (series.std() + 1e-9)
+
+
+def zscore_robust(series: pd.Series) -> pd.Series:
+    """
+    Robust Z-Score using Median and Median Absolute Deviation (MAD).
+    Neutralizes the impact of outliers in high-volatility environments.
+    """
+    median = series.median()
+    mad = (series - median).abs().median()
+    if mad < 1e-7:
+        # Fallback if MAD is 0
+        std = series.std()
+        if std < 1e-9:
+            return pd.Series(0, index=series.index)
+        return (series - median) / (std + 1e-9)
+    
+    return (series - median) / (1.4826 * mad + 1e-9)
+
+
+def detect_regime(df: pd.DataFrame) -> str:
+    """
+    Detects market regime: 'DEGEN' (turbulent) or 'STABLE' (accumulation).
+    Based on average volatility shift and volume concentration.
+    """
+    if df.empty or "vol_shift" not in df.columns:
+        return "STABLE"
+    
+    avg_vol_shift = df["vol_shift"].mean()
+    if avg_vol_shift > 1.5:
+        return "DEGEN"
+    return "STABLE"
 
 
 def compute_instability(features_df: pd.DataFrame,
                         weights: dict | None = None) -> pd.DataFrame:
     """
     Compute the Instability Index for all tokens in the DataFrame.
-
-    Default formula:
-        II = 2·Z(SA) + 1.5·Z(H) + 1.5·Z(VS) + 2·Z(SWR) − 2·Z(sell_pressure)
-
-    Weights can be overridden by the ML optimizer.
-
-    Args:
-        features_df: DataFrame with columns [sa, holder_acc, vol_shift, swr, sell_pressure]
-        weights: optional dict with keys w_sa, w_holder, w_vs, w_swr, w_sell
-
-    Returns:
-        Same DataFrame with added z-score columns and 'instability' column.
+    Adaptive weights shift based on detected market regime.
     """
     if features_df.empty:
         features_df["instability"] = pd.Series(dtype=float)
         return features_df
 
+    regime = detect_regime(features_df)
+    logger.info(f"Market Regime Detected: {regime}")
+
+    # Baseline weights
     w_sa = weights["w_sa"] if weights else WEIGHT_SA
     w_holder = weights["w_holder"] if weights else WEIGHT_HOLDER
     w_vs = weights["w_vs"] if weights else WEIGHT_VS
     w_swr = weights["w_swr"] if weights else WEIGHT_SWR
     w_sell = weights["w_sell"] if weights else WEIGHT_SELL
 
+    # Regime adjustments
+    if regime == "DEGEN":
+        # In degen mode, prioritize SWR and SA over Holder growth (which might be bots)
+        w_swr *= 1.5
+        w_sa *= 1.2
+        w_holder *= 0.8
+    
     df = features_df.copy()
 
-    # Cross-sectional z-scores
-    df["z_sa"] = zscore(df["sa"])
-    df["z_holder"] = zscore(df["holder_acc"])
-    df["z_vs"] = zscore(df["vol_shift"])
-    df["z_swr"] = zscore(df["swr"])
-    df["z_sell"] = zscore(df["sell_pressure"])
+    # Robust Standardization
+    df["z_sa"] = zscore_robust(df["sa"])
+    df["z_holder"] = zscore_robust(df["holder_acc"])
+    df["z_vs"] = zscore_robust(df["vol_shift"])
+    df["z_swr"] = zscore_robust(df["swr"])
+    df["z_sell"] = zscore_robust(df["sell_pressure"])
 
     # Instability Index
     df["instability"] = (

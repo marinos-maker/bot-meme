@@ -7,6 +7,7 @@
     <title>Solana Early Detector — Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
         rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
             --bg-primary: #0a0e17;
@@ -667,6 +668,45 @@
             border-color: rgba(16, 185, 129, 0.3);
         }
 
+        /* Narrative Tags */
+        .narrative-tag {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .narrative-ai {
+            background: rgba(168, 85, 247, 0.2);
+            color: #a855f7;
+            border: 1px solid rgba(168, 85, 247, 0.3);
+        }
+
+        .narrative-politics {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .narrative-animals {
+            background: rgba(234, 179, 8, 0.2);
+            color: #eab308;
+            border: 1px solid rgba(234, 179, 8, 0.3);
+        }
+
+        .narrative-culture {
+            background: rgba(34, 197, 94, 0.2);
+            color: #22c55e;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+
+        .narrative-generic {
+            background: rgba(156, 163, 175, 0.2);
+            color: #9ca3af;
+            border: 1px solid rgba(156, 163, 175, 0.3);
+        }
+
         .toast.info {
             background: rgba(99, 102, 241, 0.15);
             color: var(--accent);
@@ -795,11 +835,82 @@
             font-weight: 600;
             font-family: inherit;
             cursor: pointer;
-            transition: all 0.3s;
             background: rgba(168, 85, 247, 0.15);
             color: var(--purple);
-            border: 1px solid rgba(168, 85, 247, 0.3);
-            margin-right: 6px;
+            border: none;
+        }
+
+        .analyst-btn:hover {
+            background: rgba(168, 85, 247, 0.25);
+        }
+
+        /* Analytics Grid */
+        .analytics-container {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+        }
+
+        .heatmap-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            min-height: 400px;
+        }
+
+        .heatmap-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        .heat-cell {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.2s;
+            aspect-ratio: 1;
+        }
+
+        .heat-cell:hover {
+            transform: scale(1.05);
+            z-index: 10;
+        }
+
+        .heat-symbol {
+            font-weight: 700;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .heat-val {
+            font-size: 11px;
+            opacity: 0.8;
+        }
+
+        /* Explosive List */
+        .explosive-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .explosive-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            border-left: 3px solid var(--accent);
         }
 
         .analyst-btn:hover {
@@ -981,6 +1092,7 @@
             <button class="tab" onclick="switchTab('tokens')">🪙 Tokens</button>
             <button class="tab" onclick="switchTab('wallets')">👛 Wallets</button>
             <button class="tab" onclick="switchTab('actions')">⚙️ Actions</button>
+            <button class="tab" id="tab-analytics" onclick="switchTab('analytics')">📈 Analytics</button>
         </div>
 
         <!-- OVERVIEW SECTION -->
@@ -1037,6 +1149,9 @@
                                 <th>Price</th>
                                 <th>Liquidity</th>
                                 <th>Market Cap</th>
+                                <th>Insider</th>
+                                <th>Win P</th>
+                                <th>Size</th>
                                 <th>Time</th>
                                 <th>AI Analyst</th>
                                 <th>Action</th>
@@ -1060,6 +1175,7 @@
                         <thead>
                             <tr>
                                 <th>Token</th>
+                                <th>Narrative</th>
                                 <th>Price</th>
                                 <th>Market Cap</th>
                                 <th>Liquidity</th>
@@ -1171,13 +1287,32 @@
         // ── State ──────────────────────────────────────────────────────────────────
         let autoRefresh = true;
         let refreshInterval = null;
+        let activeTab = 'overview'; // Keep track of the active tab
 
         // ── Tab Navigation ─────────────────────────────────────────────────────────
-        function switchTab(tab) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        function switchTab(tabName) {
+            // Update buttons
+            document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+            // Find button by onclick content is hard, so we just use the order or ID if present
+            // Simplified: select based on text content or assume simple match
+            const buttons = Array.from(document.querySelectorAll('.tab'));
+            const targetBtn = buttons.find(b => b.textContent.toLowerCase().includes(tabName));
+            if (targetBtn) targetBtn.classList.add('active');
+
+            // Special case for analytics button since I added an ID
+            if (tabName === 'analytics') {
+                document.getElementById('tab-analytics').classList.add('active');
+            }
+
+            // Update sections
             document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-            event.target.classList.add('active');
-            document.getElementById(`section-${tab}`).classList.add('active');
+            const section = document.getElementById(`section-${tabName}`);
+            if (section) section.classList.add('active');
+
+            activeTab = tabName;
+
+            // Refresh logic handled by refreshAll
+            refreshAll();
         }
 
         // ── Auto Refresh ───────────────────────────────────────────────────────────
@@ -1255,7 +1390,7 @@
 
             if (data.signals.length === 0) {
                 tbody.innerHTML = `
-                <tr><td colspan="7">
+                <tr><td colspan="11">
                     <div class="empty-state">
                         <div class="icon">🔍</div>
                         <h3>No signals yet</h3>
@@ -1283,6 +1418,9 @@
                 <td class="mono">$${formatNum(s.entry_price)}</td>
                 <td class="mono">$${formatNum(s.liquidity)}</td>
                 <td class="mono">$${formatNum(s.marketcap)}</td>
+                <td class="mono" style="color:${s.insider_psi > 0.5 ? 'var(--red)' : 'var(--text-secondary)'}">${(s.insider_psi).toFixed(2)}</td>
+                <td class="mono" style="color:var(--green)">${(s.confidence * 100).toFixed(0)}%</td>
+                <td class="mono" style="color:var(--accent)">${(s.kelly_size * 100).toFixed(1)}%</td>
                 <td class="last-update">${formatTime(s.timestamp)}</td>
                 <td>
                     <button class="analyst-btn" onclick="openAnalyst('${s.token_address}', '${s.token_symbol}')">
@@ -1308,7 +1446,7 @@
 
             if (data.tokens.length === 0) {
                 tbody.innerHTML = `
-                <tr><td colspan="9">
+                <tr><td colspan="11">
                     <div class="empty-state">
                         <div class="icon">🪙</div>
                         <h3>No tokens tracked yet</h3>
@@ -1495,6 +1633,12 @@
             }
         }
 
+        function analyzeToken(address) {
+            // Find the symbol for the given address if needed, or pass a placeholder
+            // For now, we'll just pass the address and let openAnalyst fetch details
+            openAnalyst(address, 'Token');
+        }
+
         // ── Refresh All ────────────────────────────────────────────────────────────
         async function refreshAll() {
             await Promise.all([
@@ -1502,14 +1646,124 @@
                 loadSignals(),
                 loadTokens(),
                 loadWallets(),
+                fetchAnalytics(), // Added for analytics tab
             ]);
         }
 
         // ── Init ───────────────────────────────────────────────────────────────────
+        // Initialize
         refreshAll();
         startAutoRefresh();
+
+        // Analytics Logic
+        async function fetchAnalytics() {
+            try {
+                const res = await fetch('/api/analytics');
+                const data = await res.json();
+                renderHeatmap(data.heatmap);
+                renderExplosive(data.explosive_leaders);
+                renderNarratives(data.narrative_stats);
+            } catch (e) {
+                console.error("Analytics error", e);
+            }
+        }
+
+        function renderNarratives(stats) {
+            const container = document.getElementById('narrativeContainer');
+            if (!stats) return;
+
+            // Sort by dominance
+            const entries = Object.entries(stats).sort((a, b) => b[1].dominance - a[1].dominance);
+
+            container.innerHTML = entries.map(([name, data]) => {
+                const color = name === 'AI' ? 'var(--purple)' :
+                    name === 'POLITICS' ? 'var(--red)' :
+                        name === 'ANIMALS' ? 'var(--yellow)' :
+                            name === 'GENERIC' ? 'var(--text-muted)' : 'var(--accent)';
+
+                return `
+                    <div style="margin-bottom: 8px;">
+                        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+                            <span style="font-weight:600; color:${color}">${name}</span>
+                            <span style="color:var(--text-secondary)">${data.dominance.toFixed(1)}%</span>
+                        </div>
+                        <div style="height:6px; background:rgba(255,255,255,0.05); border-radius:3px; overflow:hidden;">
+                            <div style="height:100%; width:${data.dominance}%; background:${color}; border-radius:3px;"></div>
+                        </div>
+                        <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">${data.count} tokens</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderHeatmap(data) {
+            const container = document.getElementById('heatmapGrid');
+            if (!data || data.length === 0) {
+                container.innerHTML = '<div class="empty-state">No data available</div>';
+                return;
+            }
+
+            container.innerHTML = data.map(item => {
+                // Color scale: Red intensity based on instability (0-100)
+                // We want a gradient from blue/purple (low) to red (high)
+                const score = Math.min(Math.max(item.instability_index, 0), 100);
+
+                // HSL: 
+                // Low (0) -> Blue/Purple (240)
+                // High (100) -> Red (0)
+                // We map 0-100 quite aggressively. 
+                // Let's say Safe is < 20. 
+
+                let bg;
+                if (score > 50) {
+                    // Red zone
+                    const opacity = 0.2 + (score / 200);
+                    bg = `rgba(239, 68, 68, ${opacity})`;
+                } else if (score > 20) {
+                    // Yellow/Orange
+                    const opacity = 0.2 + (score / 200);
+                    bg = `rgba(245, 158, 11, ${opacity})`;
+                } else {
+                    // Chill zone
+                    bg = `rgba(99, 102, 241, 0.1)`;
+                }
+
+                return `
+                    <div class="heat-cell" style="background: ${bg}" onclick="analyzeToken('${item.address}')">
+                        <div class="heat-symbol">${item.symbol}</div>
+                        <div class="heat-val">II: ${score.toFixed(1)}</div>
+                        <div class="heat-val" style="font-size: 9px; opacity: 0.5">Vel: ${item.velocity.toFixed(0)}%</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderExplosive(data) {
+            const container = document.getElementById('explosiveList');
+            if (!data || data.length === 0) {
+                container.innerHTML = '<div class="empty-state" style="padding: 20px;">No data</div>';
+                return;
+            }
+
+            container.innerHTML = data.map((item, idx) => `
+                <div class="explosive-item">
+                    <div style="display:flex; gap:12px; align-items:center;">
+                        <span style="font-weight:700; color:var(--accent); width:20px;">#${idx + 1}</span>
+                        <div>
+                            <div style="font-weight:600; font-size:13px;">${item.symbol}</div>
+                             <div style="font-size:11px; color:var(--text-muted); cursor:pointer;" onclick="navigator.clipboard.writeText('${item.address}')">${item.address.slice(0, 4)}...${item.address.slice(-4)}</div>
+                        </div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-weight:700; color:var(--green);">${item.velocity.toFixed(1)}%</div>
+                        <div style="font-size:10px; color:var(--text-muted);">Turnover</div>
+                    </div>
+                </div>
+            `).join('');
+        }
     </script>
 
 </body>
 
 </html>
+```

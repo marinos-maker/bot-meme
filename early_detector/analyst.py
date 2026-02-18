@@ -57,6 +57,7 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
                 h_growth = ((curr_h - prev_h) / prev_h) * 100
 
         # 2. Build Prompt
+        # 2. Build Prompt
         prompt = f"""
         Analyze this Solana Meme Coin signal. Be critical, concise, and act as a pro degen trader.
         
@@ -76,10 +77,10 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         Based on these metrics, give me a structured verdict. 
         Return ONLY a JSON object with this exact structure (no markdown formatting, no backticks, just raw JSON):
         {{
-            "rating": (int 0-10),
-            "verdict": (BUY, AVOID, or WAIT),
-            "summary": (max 150 characters explanation),
-            "risks": [list of 2-3 main risks]
+            "verdict": "BUY" | "WAIT" | "AVOID",
+            "confidence": (int 0-100),
+            "risk_level": "HIGH" | "MEDIUM" | "LOW",
+            "reasoning": "Concise explanation of your verdict (max 200 chars)"
         }}
         """
 
@@ -120,14 +121,28 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         if not response_text:
             raise Exception("All Gemini models failed")
         
-        # 4. Parse JSON from response text
+        # 4. Parse JSON from response text (Robust)
         text = response_text.strip()
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0].strip()
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0].strip()
-            
-        result = json.loads(text)
+        
+        # Strip markdown code blocks if present
+        if "```" in text:
+            # find first { and last }
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1:
+                text = text[start:end+1]
+        
+        try:
+            result = json.loads(text)
+        except json.JSONDecodeError:
+            # Last ditch effort: regex for json object
+            import re
+            match = re.search(r'\{.*\}', text, re.DOTALL)
+            if match:
+                result = json.loads(match.group(0))
+            else:
+                raise ValueError(f"Could not parse JSON from AI response: {text[:50]}...")
+                
         return result
 
     except Exception as e:

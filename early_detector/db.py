@@ -32,18 +32,19 @@ async def close_pool() -> None:
 # ── Token helpers ─────────────────────────────────────────────────────────────
 
 async def upsert_token(address: str, name: str | None = None,
-                       symbol: str | None = None) -> str:
+                       symbol: str | None = None, narrative: str | None = None) -> str:
     """Insert a token if it doesn't exist; return its UUID."""
     pool = await get_pool()
     row = await pool.fetchrow(
         """
-        INSERT INTO tokens (address, name, symbol)
-        VALUES ($1, $2, $3)
+        INSERT INTO tokens (address, name, symbol, narrative)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (address) DO UPDATE SET name = COALESCE($2, tokens.name),
-                                            symbol = COALESCE($3, tokens.symbol)
+                                            symbol = COALESCE($3, tokens.symbol),
+                                            narrative = COALESCE($4, tokens.narrative)
         RETURNING id
         """,
-        address, name, symbol,
+        address, name, symbol, narrative,
     )
     return str(row["id"])
 
@@ -58,8 +59,9 @@ async def insert_metrics(token_id: str, data: dict) -> None:
         INSERT INTO token_metrics_timeseries
             (token_id, price, marketcap, liquidity, holders,
              volume_5m, volume_1h, buys_5m, sells_5m,
-             top10_ratio, smart_wallets_active, instability_index)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             top10_ratio, smart_wallets_active, instability_index,
+             insider_psi, creator_risk_score)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         """,
         token_id,
         data.get("price"),
@@ -73,6 +75,8 @@ async def insert_metrics(token_id: str, data: dict) -> None:
         data.get("top10_ratio"),
         data.get("smart_wallets_active", 0),
         data.get("instability_index"),
+        data.get("insider_psi", 0.0),
+        data.get("creator_risk_score", 0.0),
     )
 
 
@@ -121,17 +125,22 @@ async def get_all_recent_instability(minutes: int = 60) -> list[dict]:
 
 async def insert_signal(token_id: str, instability_index: float,
                         entry_price: float, liquidity: float,
-                        marketcap: float) -> None:
+                        marketcap: float, confidence: float = 0.5,
+                        kelly_size: float = 0.0, insider_psi: float = 0.0,
+                        creator_risk: float = 0.0) -> None:
     """Record a generated signal."""
     pool = await get_pool()
     await pool.execute(
         """
-        INSERT INTO signals (token_id, instability_index, entry_price, liquidity, marketcap)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO signals (token_id, instability_index, entry_price, 
+                            liquidity, marketcap, confidence, kelly_size, 
+                            insider_psi, creator_risk)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         """,
-        token_id, instability_index, entry_price, liquidity, marketcap,
+        token_id, instability_index, entry_price, liquidity, marketcap, 
+        confidence, kelly_size, insider_psi, creator_risk,
     )
-    logger.info(f"Signal saved for token {token_id} — II={instability_index:.3f}")
+    logger.info(f"Signal saved for token {token_id} — II={instability_index:.3f}, PSI={insider_psi:.2f}")
 
 
 async def has_recent_signal(token_id: str, minutes: int = 60) -> bool:

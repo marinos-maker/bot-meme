@@ -7,6 +7,7 @@ import aiohttp
 import json
 from loguru import logger
 from early_detector.config import HELIUS_API_KEY, HELIUS_BASE_URL, HELIUS_RPC_URL
+from early_detector.cache import cache
 
 # Rate limiter: max 5 concurrent requests to Helius (RPC + API)
 _semaphore = asyncio.Semaphore(5)
@@ -105,11 +106,17 @@ async def check_token_security(session: aiohttp.ClientSession, token_address: st
     Check token security (Mint Authority, Freeze Authority) using Helius RPC `getAsset`.
     Returns a dict with flags.
     """
+    # 1. Check Cache
+    cached = cache.get(f"security:{token_address}")
+    if cached:
+        return cached
+
     payload = {
         "jsonrpc": "2.0",
         "id": "security-check",
         "method": "getAsset",
         "params": {
+# ... (rest of function)
             "id": token_address
         }
     }
@@ -144,28 +151,71 @@ async def check_token_security(session: aiohttp.ClientSession, token_address: st
                 # Alternative: check ownership/supply details if authorities not explicit in DAS
                 # Fallback to standard `getAccountInfo` if DAS `getAsset` is ambiguous (simplified here)
                 
-                # Logic: Safe if Mint and Freeze are None (revoked)
-                is_safe = (mint_auth is None) and (freeze_auth is None)
+                # Creators
+                creators = result.get("creators", [])
+                creator_addr = creators[0].get("address") if creators else None
+
+                # LP Lock Check (Simplified)
+                # specific checks for LP burn require finding the LP mint address first.
+                # For now, we rely on Mint + Freeze authority being revoked as a strong signal.
+                # In V3, we would analyze the Raydium Pool account owner.
                 
-                return {
+                # Logic: Safe if Mint and Freeze are None (revoked)
+                authorities_revoked = (mint_auth is None) and (freeze_auth is None)
+                
+                result_dict = {
                     "mint_authority": mint_auth,
                     "freeze_authority": freeze_auth,
-                    "is_safe": is_safe
+                    "is_safe": authorities_revoked,
+                    "creator": creator_addr
                 }
+                
+                # Cache result for 10 minutes
+                cache.set(f"security:{token_address}", result_dict, ttl_seconds=600)
+                
+                return result_dict
                 
         except Exception as e:
             logger.error(f"Security check error for {token_address}: {e}")
             return {"mint_authority": "Unknown", "freeze_authority": "Unknown", "is_safe": False}
 
 
-async def get_real_unique_buyers(session: aiohttp.ClientSession, token_address: str, limit: int = 100) -> int:
+async def get_buyers_stats(session: aiohttp.ClientSession, token_address: str, limit: int = 100) -> dict:
     """
-    Get COUNT of unique wallets that bought in the last N transactions.
-    This replaces the 'buys_20m' approximation for Stealth Accumulation.
+    Get stats of unique wallets that bought in the last N transactions.
+    Returns:
+        {
+            "count": int,
+            "buyers": list[dict]  # [{"wallet": str, "first_trade_time": int}, ...]
+        }
     """
     trades = await fetch_token_swaps(session, token_address, limit=limit)
-    buyers = {t["wallet"] for t in trades if t["type"] == "buy"}
-    return len(buyers)
+    
+    # Filter for buys
+    buy_trades = [t for t in trades if t["type"] == "buy"]
+    
+    # Group by wallet to find first trade time and total volume per wallet
+    buyer_map = {}
+    for t in buy_trades:
+        w = t["wallet"]
+        ts = t["timestamp"]
+        vol = t.get("amount", 0) # Assumes normalized amount (e.g. in SOL or USD)
+        
+        if w not in buyer_map:
+            buyer_map[w] = {"first_trade": ts, "volume": vol}
+        else:
+            buyer_map[w]["first_trade"] = min(buyer_map[w]["first_trade"], ts)
+            buyer_map[w]["volume"] += vol
+            
+    buyers_list = [
+        {"wallet": w, "first_trade_time": d["first_trade"], "volume": d["volume"]}
+        for w, d in buyer_map.items()
+    ]
+    
+    return {
+        "count": len(buyer_map),
+        "buyers": buyers_list
+    }
 
 
 
@@ -267,3 +317,78 @@ async def test_helius_connection():
         # Test 2: Security (RPC)
         security = await check_token_security(session, test_addr)
         logger.info(f"Helius Security Test: {security}")
+
+
+async def fetch_creator_history(session: aiohttp.ClientSession, creator_address: str) -> float:
+    """
+    Analyze risk of a creator wallet.
+    Fetch all tokens created by this address.
+    Risk Score = (Rugged Tokens / Total Tokens)
+    
+    returns: float 0.0 (Safe) to 1.0 (High Risk)
+    """
+    # 1. Check Cache
+    cached = cache.get(f"creator:{creator_address}")
+    if cached is not None:
+        return cached
+
+    # Helius DAS API: Get assets by creator
+    url = HELIUS_RPC_URL
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "creator-check",
+        "method": "getAssetsByCreator",
+        "params": {
+            "creatorAddress": creator_address,
+            "onlyVerified": True,
+            "page": 1,
+            "limit": 50
+        }
+    }
+    
+    async with _semaphore:
+        try:
+            async with session.post(url, json=payload, timeout=10) as resp:
+                if resp.status != 200:
+                    cache.set(f"creator:{creator_address}", 0.5, ttl_seconds=3600) # shorter TTL for errors
+                    return 0.5 # Unknown risk
+                
+                body = await resp.json()
+                items = body.get("result", {}).get("items", [])
+                
+                if not items:
+                    cache.set(f"creator:{creator_address}", 0.0, ttl_seconds=86400)
+                    return 0.0 # No history = Neutral/Safe-ish (Fresh wallet logic handles the rest)
+                
+                total = len(items)
+                rugged = 0
+                
+                # Heuristic: Check if previous tokens are "dead"
+                # Ideally we'd check their price/volume, but that requires N API calls.
+                # Proxy: Check if they have "Mutable" metadata enabled (often used for rugs) OR 
+                # if we can get a batch status.
+                # For this iteration, we use a simpler heuristic: 
+                # If they created MANY tokens (>5) in a short time, it's a serial pump-and-dumper.
+                
+                # Advanced: We could check if Mint Authority is still enabled for them.
+                for item in items:
+                    # simplistic "bad actor" check from metadata headers if available
+                    # Real "rugged" check needs price history.
+                    # For now, we penalize high velocity: serial creators are risky.
+                    pass
+                
+                # Serial Creator Penalty
+                # If a wallet has created > 10 tokens, assume farm/spam/scam unless proved otherwise
+                risk = 0.1
+                if total > 10:
+                    risk = 0.8
+                elif total > 5:
+                    risk = 0.5
+                
+                cache.set(f"creator:{creator_address}", risk, ttl_seconds=86400)
+                return risk
+
+        except Exception as e:
+            logger.error(f"Creator check error: {e}")
+            return 0.0
+

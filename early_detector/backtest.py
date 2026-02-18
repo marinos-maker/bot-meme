@@ -1,220 +1,178 @@
-"""
-Backtest Engine — minute-by-minute historical replay with multiple exit strategies.
-"""
 
-import numpy as np
+import asyncio
+import argparse
+from datetime import datetime, timedelta
+from decimal import Decimal
 import pandas as pd
+import numpy as np
 from loguru import logger
-from early_detector.features import compute_all_features
-from early_detector.scoring import zscore
+from early_detector.db import get_pool
 
+class Backtester:
+    def __init__(self, days: int = 1, ii_threshold: float = 2.0, 
+                 take_profit: float = 0.5, stop_loss: float = 0.2):
+        self.days = days
+        self.ii_threshold = ii_threshold
+        self.take_profit = take_profit
+        self.stop_loss = stop_loss
+        self.results = []
+        self.trades = []
 
-class BacktestEngine:
-    """
-    Replays historical data minute-by-minute, simulating the Early Detector
-    signals and measuring performance with different exit strategies.
-    """
+    async def fetch_data(self):
+        """Fetch historical token metrics."""
+        pool = await get_pool()
+        logger.info(f"Fetching data for the last {self.days} days...")
+        
+        # We need a continuous stream of metrics for all tokens that had HIGH instability at some point
+        # Optimization: First find tokens that trigger the II threshold
+        target_tokens = await pool.fetch(
+            """
+            SELECT DISTINCT token_id 
+            FROM token_metrics_timeseries 
+            WHERE instability_index >= $1 
+              AND timestamp > NOW() - ($2 || ' days')::INTERVAL
+            """,
+            self.ii_threshold, str(self.days)
+        )
+        
+        token_ids = [str(r['token_id']) for r in target_tokens]
+        logger.info(f"Found {len(token_ids)} active tokens matching criteria.")
+        
+        if not token_ids:
+            return {}
 
-    def __init__(self, exit_strategy: str = "A", percentile: float = 0.95):
-        """
-        Args:
-            exit_strategy: "A" (TP 100%/SL -30%), "B" (trailing 40%), "C" (smart wallet exit)
-            percentile: signal trigger percentile (default 95th)
-        """
-        self.exit_strategy = exit_strategy
-        self.percentile = percentile
-        self.trades: list[dict] = []
-        self.equity_curve: list[float] = []
+        # Now fetch full history for these tokens to simulate the trade
+        # usage of ANY($1) for array input
+        limit_date = datetime.now() - timedelta(days=self.days)
+        records = await pool.fetch(
+            """
+            SELECT token_id, timestamp, price, liquidity, instability_index
+            FROM token_metrics_timeseries
+            WHERE token_id = ANY($1::uuid[])
+              AND timestamp >= $2
+            ORDER BY token_id, timestamp ASC
+            """,
+            token_ids, limit_date
+        )
+        
+        # Organize by token
+        data = {}
+        for r in records:
+            tid = str(r['token_id'])
+            if tid not in data:
+                data[tid] = []
+            
+            data[tid].append({
+                'ts': r['timestamp'],
+                'price': float(r['price']) if r['price'] else 0.0,
+                'liq': float(r['liquidity']) if r['liquidity'] else 0.0,
+                'ii': float(r['instability_index']) if r['instability_index'] else 0.0
+            })
+            
+        logger.info(f"Loaded metrics for {len(data)} tokens.")
+        return data
 
-    def run(self, historical_df: pd.DataFrame,
-            smart_wallet_sells: pd.DataFrame | None = None) -> pd.DataFrame:
-        """
-        Run backtest on historical data.
+    def simulate(self, data):
+        """Run the simulation loop."""
+        logger.info("Starting simulation...")
+        
+        for tid, history in data.items():
+            in_trade = False
+            entry_price = 0.0
+            entry_ts = None
+            
+            for i in range(len(history)):
+                candle = history[i]
+                
+                # ENTRY CONDITION
+                if not in_trade:
+                    if candle['ii'] >= self.ii_threshold and candle['liq'] > 1000:
+                        in_trade = True
+                        entry_price = candle['price']
+                        entry_ts = candle['ts']
+                        # logger.debug(f"BUY {tid} @ {entry_price} (II: {candle['ii']})")
+                
+                # EXIT CONDITIONS
+                elif in_trade:
+                    current_price = candle['price']
+                    if entry_price == 0: continue # Should not happen
+                    
+                    roi = (current_price - entry_price) / entry_price
+                    duration = (candle['ts'] - entry_ts).total_seconds() / 60
+                    
+                    # 1. Take Profit
+                    if roi >= self.take_profit:
+                        self.close_trade(tid, entry_ts, candle['ts'], roi, "TP")
+                        in_trade = False
+                    
+                    # 2. Stop Loss
+                    elif roi <= -self.stop_loss:
+                        self.close_trade(tid, entry_ts, candle['ts'], roi, "SL")
+                        in_trade = False
+                        
+                    # 3. Time Limit (e.g. 4 hours)
+                    elif duration > 240:
+                        self.close_trade(tid, entry_ts, candle['ts'], roi, "TIME")
+                        in_trade = False
 
-        Args:
-            historical_df: DataFrame sorted by timestamp with columns:
-                [token_id, timestamp, price, holders, buys_5m, sells_5m,
-                 unique_buyers_20m, sells_20m, buys_20m, price_20m_list,
-                 price_5m_list, swr, liquidity, marketcap, top10_ratio]
-            smart_wallet_sells: DataFrame with [token_id, timestamp] of SW sells
-                (used for exit strategy C)
+    def close_trade(self, tid, start, end, roi, reason):
+        self.trades.append({
+            'token': tid,
+            'start': start,
+            'end': end,
+            'roi': roi,
+            'reason': reason
+        })
 
-        Returns:
-            DataFrame of trades with performance metrics.
-        """
-        logger.info(f"Starting backtest — strategy={self.exit_strategy}, "
-                    f"percentile={self.percentile}")
-
-        tokens = historical_df["token_id"].unique()
-        open_positions: dict[str, dict] = {}
-        equity = 1.0
-        self.equity_curve = [equity]
-
-        # Group by timestamp for cross-sectional scoring
-        for ts, group in historical_df.groupby("timestamp"):
-            features_list = []
-
-            for _, row in group.iterrows():
-                price_20m = np.array(row.get("price_20m_list", [row["price"]]))
-                price_5m = np.array(row.get("price_5m_list", [row["price"]]))
-
-                feat = compute_all_features(
-                    h_t=row.get("holders", 0),
-                    h_t10=row.get("holders_t10", 0),
-                    h_t20=row.get("holders_t20", 0),
-                    unique_buyers=row.get("unique_buyers_20m", 0),
-                    sells_20m=row.get("sells_20m", 0),
-                    buys_20m=row.get("buys_20m", 0),
-                    price_series_20m=price_20m,
-                    price_series_5m=price_5m,
-                    sells_5m=row.get("sells_5m", 0),
-                    buys_5m=row.get("buys_5m", 0),
-                    swr=row.get("swr", 0),
-                )
-                feat["token_id"] = row["token_id"]
-                feat["price"] = row["price"]
-                feat["liquidity"] = row.get("liquidity", 0)
-                feat["marketcap"] = row.get("marketcap", 0)
-                feat["top10_ratio"] = row.get("top10_ratio", 0)
-                feat["timestamp"] = ts
-                features_list.append(feat)
-
-            if not features_list:
-                continue
-
-            feat_df = pd.DataFrame(features_list)
-
-            # Cross-sectional z-scores
-            for col in ["sa", "holder_acc", "vol_shift", "swr", "sell_pressure"]:
-                feat_df[f"z_{col}"] = zscore(feat_df[col])
-
-            # Instability Index
-            feat_df["instability"] = (
-                2 * feat_df["z_sa"]
-                + 1.5 * feat_df["z_holder_acc"]
-                + 1.5 * feat_df["z_vol_shift"]
-                + 2 * feat_df["z_swr"]
-                - 2 * feat_df["z_sell_pressure"]
-            )
-
-            # Dynamic threshold
-            threshold = np.percentile(feat_df["instability"].dropna(),
-                                      self.percentile * 100)
-
-            # Check entries
-            for _, tok in feat_df.iterrows():
-                tid = tok["token_id"]
-
-                # Check exits for open positions
-                if tid in open_positions:
-                    pos = open_positions[tid]
-                    pnl = self._check_exit(pos, tok, smart_wallet_sells, ts)
-                    if pnl is not None:
-                        trade = {**pos, "exit_price": tok["price"],
-                                 "exit_time": ts, "pnl_pct": pnl}
-                        self.trades.append(trade)
-                        equity *= (1 + pnl)
-                        del open_positions[tid]
-
-                # Check new entries
-                elif (tok["instability"] > threshold
-                      and tok.get("liquidity", 0) > 40000
-                      and tok.get("marketcap", float("inf")) < 3_000_000
-                      and tok.get("top10_ratio", 0) < 0.35):
-                    open_positions[tid] = {
-                        "token_id": tid,
-                        "entry_price": tok["price"],
-                        "entry_time": ts,
-                        "peak_price": tok["price"],
-                        "instability": tok["instability"],
-                    }
-
-            self.equity_curve.append(equity)
-
-        logger.info(f"Backtest complete — {len(self.trades)} trades")
-        return pd.DataFrame(self.trades) if self.trades else pd.DataFrame()
-
-    def _check_exit(self, position: dict, current: pd.Series,
-                    sw_sells: pd.DataFrame | None, ts) -> float | None:
-        """
-        Check exit conditions based on the selected strategy.
-        Returns PnL percentage if exit triggered, None otherwise.
-        """
-        entry = position["entry_price"]
-        price = current["price"]
-        pnl = (price - entry) / entry
-
-        # Update peak
-        position["peak_price"] = max(position["peak_price"], price)
-        peak = position["peak_price"]
-
-        if self.exit_strategy == "A":
-            # TP 100% / SL -30%
-            if pnl >= 1.0:
-                return pnl
-            if pnl <= -0.3:
-                return pnl
-
-        elif self.exit_strategy == "B":
-            # Trailing stop 40% from peak
-            drawdown = (peak - price) / peak if peak > 0 else 0
-            if drawdown >= 0.4:
-                return pnl
-
-        elif self.exit_strategy == "C":
-            # Exit when smart wallets start selling
-            if sw_sells is not None:
-                tid = position["token_id"]
-                sw_exit = sw_sells[
-                    (sw_sells["token_id"] == tid)
-                    & (sw_sells["timestamp"] == ts)
-                ]
-                if not sw_exit.empty:
-                    return pnl
-
-        return None
-
-    def compute_metrics(self) -> dict:
-        """Compute comprehensive performance metrics from completed trades."""
+    def report(self):
+        """Generate performance report."""
         if not self.trades:
-            return {"error": "No trades to evaluate"}
+            logger.warning("No trades executed.")
+            return
 
         df = pd.DataFrame(self.trades)
-        pnls = df["pnl_pct"]
+        wins = df[df['roi'] > 0]
+        losses = df[df['roi'] <= 0]
+        
+        win_rate = len(wins) / len(df) * 100
+        avg_roi = df['roi'].mean() * 100
+        total_roi = df['roi'].sum() * 100
+        
+        print("\n" + "="*40)
+        print(f" BACKTEST REPORT (Last {self.days} days)")
+        print(f" II Threshold: {self.ii_threshold} | TP: {self.take_profit*100}% | SL: {self.stop_loss*100}%")
+        print("="*40)
+        print(f" Total Trades:   {len(df)}")
+        print(f" Win Rate:       {win_rate:.2f}%")
+        print(f" Avg ROI:        {avg_roi:.2f}%")
+        print(f" Cumulative ROI: {total_roi:.2f}%")
+        print(f" Best Trade:     {df['roi'].max()*100:.2f}%")
+        print(f" Worst Trade:    {df['roi'].min()*100:.2f}%")
+        print("-" * 40)
+        print(f" TP Hits:        {len(df[df['reason']=='TP'])}")
+        print(f" SL Hits:        {len(df[df['reason']=='SL'])}")
+        print(f" Timed Out:      {len(df[df['reason']=='TIME'])}")
+        print("="*40 + "\n")
 
-        wins = pnls[pnls > 0]
-        losses = pnls[pnls <= 0]
+async def run_backtest():
+    parser = argparse.ArgumentParser(description="Solana Early Detector Backtester")
+    parser.add_argument("--days", type=int, default=1, help="Days of history to test")
+    parser.add_argument("--ii", type=float, default=2.0, help="Instability Index Threshold")
+    parser.add_argument("--tp", type=float, default=0.5, help="Take Profit (0.5 = 50%)")
+    parser.add_argument("--sl", type=float, default=0.2, help="Stop Loss (0.2 = 20%)")
+    
+    args = parser.parse_args()
+    
+    tester = Backtester(days=args.days, ii_threshold=args.ii, 
+                        take_profit=args.tp, stop_loss=args.sl)
+    
+    data = await tester.fetch_data()
+    if data:
+        tester.simulate(data)
+        tester.report()
 
-        gross_profit = wins.sum() if len(wins) > 0 else 0
-        gross_loss = abs(losses.sum()) if len(losses) > 0 else 0
-
-        # Sharpe ratio (annualised assuming ~525,600 minutes/year)
-        if pnls.std() > 0:
-            sharpe = (pnls.mean() / pnls.std()) * np.sqrt(365 * 24)
-        else:
-            sharpe = 0.0
-
-        # Max drawdown from equity curve
-        eq = np.array(self.equity_curve)
-        peak_eq = np.maximum.accumulate(eq)
-        drawdowns = (peak_eq - eq) / peak_eq
-        max_dd = float(drawdowns.max())
-
-        metrics = {
-            "total_trades": len(df),
-            "win_rate": float(len(wins) / len(df)) if len(df) > 0 else 0,
-            "profit_factor": float(gross_profit / gross_loss) if gross_loss > 0 else float("inf"),
-            "max_drawdown": max_dd,
-            "sharpe_ratio": float(sharpe),
-            "avg_pnl": float(pnls.mean()),
-            "median_pnl": float(pnls.median()),
-            "best_trade": float(pnls.max()),
-            "worst_trade": float(pnls.min()),
-            "pct_2x": float((pnls >= 1.0).mean()),
-        }
-
-        logger.info(
-            f"📊 Backtest Results (Strategy {self.exit_strategy}):\n"
-            + "\n".join(f"  {k}: {v}" for k, v in metrics.items())
-        )
-        return metrics
+if __name__ == "__main__":
+    try:
+        asyncio.run(run_backtest())
+    except KeyboardInterrupt:
+        pass

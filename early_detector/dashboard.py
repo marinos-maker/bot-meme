@@ -21,6 +21,7 @@ from loguru import logger
 from early_detector.config import DASHBOARD_PORT
 from early_detector.db import get_pool, close_pool
 from early_detector.analyst import analyze_token_signal
+from early_detector.narrative import NarrativeManager
 
 
 @asynccontextmanager
@@ -73,7 +74,9 @@ async def api_signals(limit: int = 50):
     rows = await pool.fetch(
         """
         SELECT s.id, s.timestamp, s.instability_index, s.entry_price,
-               s.liquidity, s.marketcap, t.address, t.name, t.symbol
+               s.liquidity, s.marketcap, s.confidence, s.kelly_size,
+               s.insider_psi, s.creator_risk,
+               t.address, t.name, t.symbol
         FROM signals s
         JOIN tokens t ON t.id = s.token_id
         ORDER BY s.timestamp DESC
@@ -91,6 +94,10 @@ async def api_signals(limit: int = 50):
             "entry_price": float(r["entry_price"] or 0),
             "liquidity": float(r["liquidity"] or 0),
             "marketcap": float(r["marketcap"] or 0),
+            "confidence": float(r["confidence"] or 0),
+            "kelly_size": float(r["kelly_size"] or 0),
+            "insider_psi": float(r["insider_psi"] or 0.0),
+            "creator_risk": float(r["creator_risk"] or 0.0),
             "token_address": r["address"],
             "token_name": r["name"] or "Unknown",
             "token_symbol": r["symbol"] or "???",
@@ -107,10 +114,10 @@ async def api_tokens(limit: int = 50):
     rows = await pool.fetch(
         """
         SELECT DISTINCT ON (t.address)
-            t.address, t.name, t.symbol, t.first_seen_at,
+            t.address, t.name, t.symbol, t.first_seen_at, t.narrative,
             m.price, m.marketcap, m.liquidity, m.holders,
             m.volume_5m, m.buys_5m, m.sells_5m, m.instability_index,
-            m.timestamp
+            m.timestamp, m.insider_psi, m.creator_risk_score
         FROM tokens t
         JOIN token_metrics_timeseries m ON m.token_id = t.id
         ORDER BY t.address, m.timestamp DESC
@@ -134,6 +141,9 @@ async def api_tokens(limit: int = 50):
             "buys_5m": r["buys_5m"] or 0,
             "sells_5m": r["sells_5m"] or 0,
             "instability_index": float(r["instability_index"] or 0),
+            "insider_psi": float(r["insider_psi"] or 0.0),
+            "creator_risk": float(r["creator_risk_score"] or 0.0),
+            "narrative": r["narrative"] or "GENERIC",
             "last_update": r["timestamp"].isoformat() if r["timestamp"] else None,
             "buy_url": f"https://jup.ag/swap/SOL-{r['address']}",
         })
@@ -216,6 +226,65 @@ async def api_wallets(limit: int = 100):
         })
 
     return {"wallets": wallets}
+
+
+
+@app.get("/api/analytics")
+async def api_analytics():
+    """
+    Return data for visualization:
+    1. Heatmap (Instability vs Free Float/Mcap) - using Instability directly.
+    2. Explosiveness (Volume/Liquidity Ratio).
+    3. Narrative Dominance (Capital Rotation).
+    """
+    pool = await get_pool()
+    
+    # Get latest metrics for all active tokens (last 30m)
+    rows = await pool.fetch(
+        """
+        SELECT DISTINCT ON (t.id)
+            t.address, t.symbol, t.name,
+            m.price, m.marketcap, m.liquidity, 
+            m.volume_5m, m.instability_index, m.timestamp
+        FROM tokens t
+        JOIN token_metrics_timeseries m ON m.token_id = t.id
+        WHERE m.timestamp > NOW() - INTERVAL '30 minutes'
+        ORDER BY t.id, m.timestamp DESC
+        """
+    )
+    
+    data = []
+    for r in rows:
+        liq = float(r["liquidity"] or 0)
+        vol = float(r["volume_5m"] or 0)
+        
+        # Calculate Velocity (Turnover)
+        velocity = (vol / (liq + 1)) * 100 if liq > 0 else 0
+        
+        data.append({
+            "address": r["address"],
+            "symbol": r["symbol"] or "???",
+            "name": r["name"] or "Unknown",
+            "instability_index": float(r["instability_index"] or 0),
+            "liquidity": liq,
+            "marketcap": float(r["marketcap"] or 0),
+            "volume_5m": vol,
+            "velocity": velocity
+        })
+    
+    # Narrative Statistics
+    narrative_stats = NarrativeManager.get_narrative_stats(data)
+    
+    # Sorts
+    explosive = sorted(data, key=lambda x: x["velocity"], reverse=True)[:10]
+    unstable = sorted(data, key=lambda x: x["instability_index"], reverse=True)[:10]
+    
+    return {
+        "heatmap": data,
+        "explosive_leaders": explosive,
+        "instability_leaders": unstable,
+        "narrative_stats": narrative_stats
+    }
 
 
 # ── Action Endpoints ──────────────────────────────────────────────────────────
