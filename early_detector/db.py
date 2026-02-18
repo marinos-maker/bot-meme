@@ -1,0 +1,158 @@
+"""
+Database module — async PostgreSQL connection pool and CRUD helpers.
+"""
+
+import asyncpg
+from loguru import logger
+from early_detector.config import SUPABASE_DB_URL
+
+_pool: asyncpg.Pool | None = None
+
+
+async def get_pool() -> asyncpg.Pool:
+    """Return (and lazily create) a shared connection pool."""
+    global _pool
+    if _pool is None:
+        logger.info("Creating database connection pool…")
+        _pool = await asyncpg.create_pool(SUPABASE_DB_URL, min_size=2, max_size=10)
+        logger.info("Database pool created.")
+    return _pool
+
+
+async def close_pool() -> None:
+    """Gracefully close the connection pool."""
+    global _pool
+    if _pool is not None:
+        await _pool.close()
+        _pool = None
+        logger.info("Database pool closed.")
+
+
+# ── Token helpers ─────────────────────────────────────────────────────────────
+
+async def upsert_token(address: str, name: str | None = None,
+                       symbol: str | None = None) -> str:
+    """Insert a token if it doesn't exist; return its UUID."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        INSERT INTO tokens (address, name, symbol)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (address) DO UPDATE SET name = COALESCE($2, tokens.name),
+                                            symbol = COALESCE($3, tokens.symbol)
+        RETURNING id
+        """,
+        address, name, symbol,
+    )
+    return str(row["id"])
+
+
+# ── Metrics helpers ───────────────────────────────────────────────────────────
+
+async def insert_metrics(token_id: str, data: dict) -> None:
+    """Insert a row into token_metrics_timeseries."""
+    pool = await get_pool()
+    await pool.execute(
+        """
+        INSERT INTO token_metrics_timeseries
+            (token_id, price, marketcap, liquidity, holders,
+             volume_5m, volume_1h, buys_5m, sells_5m,
+             top10_ratio, smart_wallets_active, instability_index)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        """,
+        token_id,
+        data.get("price"),
+        data.get("marketcap"),
+        data.get("liquidity"),
+        data.get("holders"),
+        data.get("volume_5m"),
+        data.get("volume_1h"),
+        data.get("buys_5m"),
+        data.get("sells_5m"),
+        data.get("top10_ratio"),
+        data.get("smart_wallets_active", 0),
+        data.get("instability_index"),
+    )
+
+
+async def get_recent_metrics(token_id: str, minutes: int = 60) -> list[dict]:
+    """Fetch recent metric rows for a token within the last N minutes."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT * FROM token_metrics_timeseries
+        WHERE token_id = $1
+          AND timestamp > NOW() - ($2 || ' minutes')::INTERVAL
+        ORDER BY timestamp DESC
+        """,
+        token_id, str(minutes),
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_all_recent_instability(minutes: int = 60) -> list[dict]:
+    """Fetch the latest instability_index for all tokens active in the last N minutes."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT DISTINCT ON (token_id)
+            token_id, instability_index, price, marketcap, liquidity,
+            holders, top10_ratio, timestamp
+        FROM token_metrics_timeseries
+        WHERE timestamp > NOW() - ($1 || ' minutes')::INTERVAL
+          AND instability_index IS NOT NULL
+        ORDER BY token_id, timestamp DESC
+        """,
+        str(minutes),
+    )
+    return [dict(r) for r in rows]
+
+
+# ── Signal helpers ────────────────────────────────────────────────────────────
+
+async def insert_signal(token_id: str, instability_index: float,
+                        entry_price: float, liquidity: float,
+                        marketcap: float) -> None:
+    """Record a generated signal."""
+    pool = await get_pool()
+    await pool.execute(
+        """
+        INSERT INTO signals (token_id, instability_index, entry_price, liquidity, marketcap)
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        token_id, instability_index, entry_price, liquidity, marketcap,
+    )
+    logger.info(f"Signal saved for token {token_id} — II={instability_index:.3f}")
+
+
+# ── Wallet helpers ────────────────────────────────────────────────────────────
+
+async def upsert_wallet(wallet: str, stats: dict) -> None:
+    """Insert or update wallet performance stats."""
+    pool = await get_pool()
+    await pool.execute(
+        """
+        INSERT INTO wallet_performance (wallet, avg_roi, total_trades, win_rate, cluster_label, last_active)
+        VALUES ($1, $2, $3, $4, $5, NOW())
+        ON CONFLICT (wallet) DO UPDATE
+            SET avg_roi = $2, total_trades = $3, win_rate = $4,
+                cluster_label = $5, last_active = NOW()
+        """,
+        wallet,
+        stats.get("avg_roi"),
+        stats.get("total_trades"),
+        stats.get("win_rate"),
+        stats.get("cluster_label"),
+    )
+
+
+async def get_smart_wallets() -> list[str]:
+    """Return list of wallet addresses classified as 'smart'."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT wallet FROM wallet_performance
+        WHERE avg_roi > 2.5 AND total_trades >= 15 AND win_rate > 0.4
+        """
+    )
+    return [r["wallet"] for r in rows]

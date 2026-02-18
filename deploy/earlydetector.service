@@ -1,0 +1,20 @@
+[Unit]
+Description=Solana Early Detector — Meme Coin Pre-Pump Detection Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/early_detector
+ExecStart=/home/ubuntu/early_detector/venv/bin/python -m early_detector.main
+Restart=always
+RestartSec=10
+EnvironmentFile=/home/ubuntu/early_detector/.env
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=earlydetector
+
+[Install]
+WantedBy=multi-user.target
