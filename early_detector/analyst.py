@@ -48,6 +48,9 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         buys_5m = current.get('buys_5m') or 0
         sells_5m = current.get('sells_5m') or 0
         instability = current.get('instability_index') or 0.0
+        insider_psi = current.get('insider_psi') or 0.0
+        creator_risk = current.get('creator_risk_score') or 0.0
+        narrative = current.get('narrative') or 'Unknown'
         
         h_growth = 0
         if len(history) > 1:
@@ -56,7 +59,6 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
             if prev_h > 0:
                 h_growth = ((curr_h - prev_h) / prev_h) * 100
 
-        # 2. Build Prompt
         # 2. Build Prompt
         prompt = f"""
         Analyze this Solana Meme Coin signal. Be critical, concise, and act as a pro degen trader.
@@ -71,24 +73,34 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         - 5m Volume: ${vol_5m:,.0f}
         - 5m Buys/Sells: {buys_5m}/{sells_5m}
         - Instability Index: {instability:.3f}
+        - Insider Risk (PSI): {insider_psi:.2f}
+        - Creator Risk: {creator_risk:.2f}
+        - Narrative: {narrative}
         
         LIQUIDITY/MCAP RATIO: {liq / (mcap + 1e-9):.2f}
         
-        Based on these metrics, give me a structured verdict. 
+        Based on these metrics (especially the new Insider Risk and Creator Risk scores), give me a structured verdict. 
+        A high Insider Risk (>0.7) or Creator Risk (>0.7) should be a strong red flag.
         Return ONLY a JSON object with this exact structure (no markdown formatting, no backticks, just raw JSON):
         {{
             "verdict": "BUY" | "WAIT" | "AVOID",
-            "confidence": (int 0-100),
+            "rating": (int 0-10),
             "risk_level": "HIGH" | "MEDIUM" | "LOW",
-            "reasoning": "Concise explanation of your verdict (max 200 chars)"
+            "summary": "Concise explanation of your verdict (max 200 chars)",
+            "risks": ["Risk factor 1", "Risk factor 2", "Risk factor 3"]
         }}
         """
 
         # 3. Request Analysis
         response_text = ""
         
-        # Use available models (Gemini 2.0 Flash is preferred)
-        models_to_try = ['gemini-2.0-flash', 'gemini-flash-latest']
+        # Use available models (Gemini 2.0 Flash is preferred, 1.5 as fallback)
+        models_to_try = [
+            'gemini-2.0-flash', 
+            'gemini-1.5-flash', 
+            'gemini-1.5-flash-8b', 
+            'gemini-flash-latest'
+        ]
         
         if HAS_NEW_GENAI:
             client = genai.Client(api_key=GOOGLE_API_KEY)

@@ -30,17 +30,29 @@ async def fetch_token_swaps(session: aiohttp.ClientSession,
         "limit": str(min(limit, 100)),
     }
 
-    async with _semaphore:
-        try:
-            async with session.get(url, params=params, timeout=10) as resp:
-                if resp.status != 200:
-                    logger.warning(f"Helius swaps {resp.status} for {token_address}")
-                    return []
-                txns = await resp.json()
-                return _parse_swap_transactions(txns, token_address)
-        except Exception as e:
-            logger.error(f"Helius fetch error for {token_address}: {e}")
-            return []
+    max_retries = 3
+    for attempt in range(max_retries):
+        async with _semaphore:
+            try:
+                async with session.get(url, params=params, timeout=12) as resp:
+                    if resp.status == 429:
+                        wait_time = (2 ** attempt) + 0.5
+                        logger.warning(f"Helius 429 for {token_address}, retrying in {wait_time}s...")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    
+                    if resp.status != 200:
+                        logger.warning(f"Helius swaps {resp.status} for {token_address}")
+                        return []
+                    
+                    txns = await resp.json()
+                    return _parse_swap_transactions(txns, token_address)
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    logger.error(f"Helius fetch error for {token_address} after {max_retries} attempts: {e}")
+                await asyncio.sleep(1)
+                continue
+    return []
 
 
 def _parse_swap_transactions(txns: list, token_address: str) -> list[dict]:
@@ -121,22 +133,34 @@ async def check_token_security(session: aiohttp.ClientSession, token_address: st
         }
     }
 
-    async with _semaphore:
-        try:
-            async with session.post(HELIUS_RPC_URL, json=payload, timeout=5) as resp:
-                if resp.status != 200:
-                    logger.warning(f"RPC getAsset failed: {resp.status}")
-                    return {"mint_authority": None, "freeze_authority": None, "is_safe": False}
-                
-                body = await resp.json()
-                if "error" in body:
-                    logger.warning(f"RPC error for {token_address}: {body['error']}")
-                    return {"mint_authority": None, "freeze_authority": None, "is_safe": False}
-                
-                result = body.get("result", {})
-                
-                # Check authorities
-                authorities = result.get("authorities", [])
+    max_retries = 3
+    for attempt in range(max_retries):
+        async with _semaphore:
+            try:
+                async with session.post(HELIUS_RPC_URL, json=payload, timeout=8) as resp:
+                    if resp.status == 429:
+                        wait_time = (2 ** attempt) + 1
+                        logger.warning(f"RPC 429 for {token_address}, retrying in {wait_time}s...")
+                        await asyncio.sleep(wait_time)
+                        continue
+                        
+                    if resp.status != 200:
+                        logger.warning(f"RPC getAsset failed: {resp.status}")
+                        return {"mint_authority": None, "freeze_authority": None, "is_safe": False}
+                    
+                    body = await resp.json()
+                    if "error" in body:
+                        err = body['error']
+                        if isinstance(err, dict) and err.get('code') == 429:
+                            await asyncio.sleep(2)
+                            continue
+                        logger.warning(f"RPC error for {token_address}: {err}")
+                        return {"mint_authority": None, "freeze_authority": None, "is_safe": False}
+                    
+                    result = body.get("result", {})
+                    
+                    # Check authorities
+                    authorities = result.get("authorities", [])
                 mint_auth = None
                 freeze_auth = None
                 
@@ -175,9 +199,12 @@ async def check_token_security(session: aiohttp.ClientSession, token_address: st
                 
                 return result_dict
                 
-        except Exception as e:
-            logger.error(f"Security check error for {token_address}: {e}")
-            return {"mint_authority": "Unknown", "freeze_authority": "Unknown", "is_safe": False}
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    logger.error(f"Security check error for {token_address} after {max_retries} attempts: {e}")
+                await asyncio.sleep(1)
+                continue
+    return {"mint_authority": "Unknown", "freeze_authority": "Unknown", "is_safe": False}
 
 
 async def get_buyers_stats(session: aiohttp.ClientSession, token_address: str, limit: int = 100) -> dict:

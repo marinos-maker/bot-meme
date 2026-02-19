@@ -22,6 +22,7 @@ from early_detector.config import DASHBOARD_PORT
 from early_detector.db import get_pool, close_pool
 from early_detector.analyst import analyze_token_signal
 from early_detector.narrative import NarrativeManager
+from early_detector.cache import cache
 
 
 @asynccontextmanager
@@ -161,9 +162,10 @@ async def api_analyze_token(address: str):
     # Get latest metrics
     latest_row = await pool.fetchrow(
         """
-        SELECT t.id, t.address, t.symbol, t.name,
+        SELECT t.id, t.address, t.symbol, t.name, t.narrative,
                m.price, m.marketcap, m.liquidity, m.holders,
-               m.volume_5m, m.buys_5m, m.sells_5m, m.instability_index
+               m.volume_5m, m.buys_5m, m.sells_5m, m.instability_index,
+               m.insider_psi, m.creator_risk_score
         FROM tokens t
         JOIN token_metrics_timeseries m ON m.token_id = t.id
         WHERE t.address = $1
@@ -196,7 +198,17 @@ async def api_analyze_token(address: str):
         if hasattr(v, '__float__') and not isinstance(v, (int, float)):
             token_data[k] = float(v)
             
+    analysis = cache.get(f"ai_analysis_{address}")
+    if analysis:
+        logger.info(f"Returning cached AI analysis for {address}")
+        return analysis
+
     analysis = await analyze_token_signal(token_data, history)
+    
+    # Cache the result if it's not an error or a transient wait
+    if analysis.get("verdict") not in ["ERROR", "WAIT"]:
+        cache.set(f"ai_analysis_{address}", analysis, ttl_seconds=300)
+        
     return analysis
 
 
