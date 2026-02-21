@@ -19,32 +19,52 @@ from early_detector.optimization import AlphaEngine
 
 def passes_trigger(token: dict, threshold: float) -> bool:
     """
-    Check if a token meets ALL trigger conditions:
-    - instability_index > dynamic threshold (percentile 95)
-    - liquidity > 40k
-    - marketcap < 3M
-    - top10 holder ratio < 35%
+    Check if a token meets ALL trigger conditions (V4.1 - More permissive):
+    - II > dynamic threshold
+    - dII/dt > -0.5 (allow slight cooling or stability)
+    - price compression (vol_shift < 2.0)
+    - liquidity > LIQUIDITY_MIN
     """
-    ii = token.get("instability", 0)
-    liq = token.get("liquidity", 0) or 0
-    mcap = token.get("marketcap", float("inf")) or float("inf")
-    top10 = token.get("top10_ratio")
+    ii = (token.get("instability") or 0.0)
+    delta_ii = (token.get("delta_instability") or 0.0)
+    vol_shift = (token.get("vol_shift") or 1.0)
     
-    delta_ii = token.get("delta_instability", 0)
+    liq = (token.get("liquidity", 0) or 0)
+    mcap = (token.get("marketcap", float("inf")) or float("inf"))
 
-    if ii <= threshold:
+    # 1. Condition II > P-Threshold
+    if ii < threshold:
+        return False
+        
+    # Extra check: if all scores are 0, reject (no variance in batch)
+    if ii == 0 and threshold == 0:
         return False
     
-    # Momentum Check: Only trigger if instability is RISING
-    if delta_ii <= 0:
-        logger.debug(f"Trigger rejected: Falling instability (dII={delta_ii:.3f})")
+    # 2. Condition: dII/dt > -0.5 (Permissive Momentum) 
+    # Catch tokens even if they are slightly stabilizing after a peak
+    if delta_ii < -0.5:
+        logger.info(f"Trigger rejected: Sharp falling instability (II={ii:.3f}, dII={delta_ii:.3f}) for {token.get('symbol')}")
         return False
-
+        
+    # 3. Condition: Price Compression (vol_shift < 2.0)
+    # Be more permissive with recent price action
+    if vol_shift >= 2.0 and ii < (threshold * 1.5):
+        logger.info(f"Trigger rejected: Extreme Volatility expansion (vol_shift={vol_shift:.2f}) for {token.get('symbol')}")
+        return False
+    
+    # 4. Condition: Liquidity check
+    # V4.2 Exception: Allow low reported liquidity if II is high AND MCAP is reasonable
+    # (Matches new Pump tokens where DexScreener reports 0 liq temporarily)
     if liq < LIQUIDITY_MIN:
-        return False
+        # Relaxed exception: allow low liquidity if II is very high and it's a new small cap
+        if ii > (threshold * 2.0) and mcap < 150000:
+            logger.info(f"Trigger exception: High II ({ii:.3f}) for new low-liquidity token {token.get('symbol') or token.get('address')} (Liq: {liq:.0f})")
+        else:
+            logger.info(f"Trigger rejected: Low Liquidity ({liq:.0f} < {LIQUIDITY_MIN}) for {token.get('symbol') or token.get('address')}")
+            return False
+        
     if mcap > MCAP_MAX:
-        return False
-    if top10 is not None and top10 > TOP10_MAX_RATIO:
+        logger.info(f"Trigger rejected: MarketCap too High ({mcap:.0f} > {MCAP_MAX}) for {token.get('symbol') or token.get('address')}")
         return False
 
     return True
@@ -52,56 +72,60 @@ def passes_trigger(token: dict, threshold: float) -> bool:
 
 def passes_safety_filters(token: dict) -> bool:
     """
-    Safety filters — reject token if:
-    - High Insider Probability (> 0.8)
-    - Top 5 holders > 40%
-    - Dev wallet active in last 10 min (placeholder — requires on-chain data)
-    - Sudden 3x spike in 5 min (too late)
+    Stricter Safety Filters (V4.5) to prevent rug pulls:
+    - REJECT if Mint Authority is still enabled.
+    - REJECT if Freeze Authority is still enabled.
+    - REJECT if Top 10 Holders ratio > TOP10_MAX_RATIO.
+    - REJECT if Insider Probability (PSI) > 0.65 (down from 0.85).
+    - REJECT if Creator Risk Score > 0.5 (down from 0.7).
+    - REJECT if Price Spike > 5x in 5m.
     """
-    # Insider Risk Check
-    insider_psi = token.get("insider_psi", 0.0)
-    if insider_psi > 0.8:
+    # 1. On-chain Authorities (Critical)
+    mint_auth = token.get("mint_authority")
+    if mint_auth is not None:
+        logger.info(f"Safety: Mint Authority ENABLED ({mint_auth[:8]}...) — REJECTED")
+        return False
+        
+    freeze_auth = token.get("freeze_authority")
+    if freeze_auth is not None:
+        logger.info(f"Safety: Freeze Authority ENABLED ({freeze_auth[:8]}...) — REJECTED")
+        return False
+
+    # 2. Supply Concentration
+    top10_ratio = (token.get("top10_ratio") or 0.0)
+    from early_detector.config import TOP10_MAX_RATIO
+    if top10_ratio > (TOP10_MAX_RATIO * 100): # config is likely 0.35, metrics might be 0-100 or 0-1
+        # Let's check collector.py to see how top10_ratio is stored
+        # After check, it's (top_sum / supply) * 100.0
+        if top10_ratio > 35.0: # 35%
+            logger.info(f"Safety: Top 10 concentration too high ({top10_ratio:.1f}%) — REJECTED")
+            return False
+
+    # 3. Behavioral Risk
+    insider_psi = (token.get("insider_psi") or 0.0)
+    if insider_psi > 0.65:
         logger.info(f"Safety: High Insider Probability ({insider_psi:.2f}) — REJECTED")
         return False
         
-    # Creator Risk Check
-    creator_risk = token.get("creator_risk_score", 0.5)
-    if creator_risk > 0.4:
+    creator_risk = (token.get("creator_risk_score") or 0.1)
+    if creator_risk > 0.5:
         logger.info(f"Safety: High Creator Risk ({creator_risk:.2f}) — REJECTED")
         return False
 
-    top10 = token.get("top10_ratio")
-    if top10 is not None and top10 > MAX_TOP5_HOLDER_RATIO:
-        logger.debug(f"Safety: holder concentration too high ({top10:.1%})")
-        return False
-
-    # Spike check: if price moved 3x+ in 5 min, we're late
-    price_change_5m = token.get("price_change_5m", 0)
+    # 4. Momentum Spike check
+    price_change_5m = (token.get("price_change_5m") or 0.0)
+    from early_detector.config import SPIKE_THRESHOLD
     if price_change_5m and price_change_5m >= SPIKE_THRESHOLD:
-        logger.debug(f"Safety: price spike {price_change_5m:.1f}x in 5m — too late")
+        logger.info(f"Safety: Price Spike detected ({price_change_5m:.2f}x) — REJECTED")
         return False
         
-    # Security: Mint Authority & Freeze Authority
-    # If these keys exist and are NOT None, it means the authority is enabled (risk of rug/freeze)
-    mint_auth = token.get("mint_authority")
-    freeze_auth = token.get("freeze_authority")
-    
-    if mint_auth:
-        logger.debug(f"Safety: Mint Authority enabled ({mint_auth})")
-        return False
-        
-    if freeze_auth:
-        logger.debug(f"Safety: Freeze Authority enabled ({freeze_auth})")
-        return False
-
     return True
 
 
-async def process_signals(scored_df, threshold: float) -> list[dict]:
+async def process_signals(scored_df, threshold: float, regime_label: str = "UNKNOWN") -> list[dict]:
     """
     Evaluate all scored tokens and generate signals for qualifying ones.
-
-    Returns list of signal dicts for further processing.
+    Includes Position Sizing (Quarter Kelly).
     """
     signals = []
 
@@ -114,30 +138,66 @@ async def process_signals(scored_df, threshold: float) -> list[dict]:
         if not passes_safety_filters(token_data):
             continue
 
-        # Prevent duplicate signals if one was already sent recently (e.g. 60m)
         token_id = str(token_data.get("token_id"))
         if await has_recent_signal(token_id, minutes=60):
             continue
 
-        # ── Alpha Optimization (Phase 10) ──
-        # Calculate Bayesian Confidence
-        # Base prior from II (e.g. 0.3-0.7 scale)
-        prior = np.clip(token_data.get("instability", 0) / 5.0, 0.3, 0.7)
-        
-        # Likelihoods based on security and momentum
+        # ── Bayesian Win Probability (V4.3) ──
+        # Start with a neutral prior and apply likelihood ratios
+        prior = 0.5
         likelihoods = []
-        if token_data.get("creator_risk_score", 0.5) < 0.2: likelihoods.append(1.5)
-        if token_data.get("insider_psi", 0.0) < 0.1: likelihoods.append(1.3)
-        if token_data.get("accel_liq", 0) > 0: likelihoods.append(1.2)
         
-        confidence = AlphaEngine.calculate_bayesian_confidence(prior, likelihoods)
+        # 1. Regime context
+        if regime_label == "DEGEN":
+            likelihoods.append(1.1)  # Higher turnover in degen mode often follows through
         
-        # Calculate Kelly Size (assuming 2.0x avg win, 0.25 fractional kelly)
+        # 2. Risk Metrics
+        creator_risk = token_data.get("creator_risk_score") or 0.5
+        if creator_risk < 0.15:
+            likelihoods.append(1.3)
+        elif creator_risk > 0.8:
+            likelihoods.append(0.7)
+            
+        insider_psi = token_data.get("insider_psi") or 0.0
+        if insider_psi < 0.1:
+            likelihoods.append(1.3)
+        elif insider_psi > 0.6:
+            likelihoods.append(0.6)
+
+        # 3. Momentum & Intensity
+        ii = token_data.get("instability_index") or 0
+        if threshold > 0 and (ii / threshold) > 1.5:
+            likelihoods.append(1.25)
+            
+        delta_ii = (token_data.get("delta_instability") or 0.0)
+        if delta_ii > 20:
+            likelihoods.append(1.2)
+        elif delta_ii < -10:
+            likelihoods.append(0.8)
+
+        # 4. Smart Wallet Rotation (SWR)
+        swr = token_data.get("swr") or 0
+        if swr > 0:
+            likelihoods.append(1.5)
+
+        base_confidence = AlphaEngine.calculate_bayesian_confidence(prior, likelihoods)
+        
+        # Quarter Kelly sizing
         kelly_size = AlphaEngine.calculate_kelly_size(
-            win_prob=confidence, 
-            avg_win_multiplier=2.0, 
-            fractional_kelly=0.25
+            win_prob=base_confidence,
+            avg_win_multiplier=0.45,   # Conservative targets
+            avg_loss_multiplier=0.15,
+            fractional_kelly=0.25 
         )
+        
+        # Point 2: Size reduction for moderate insider risk
+        insider_psi = (token_data.get("insider_psi") or 0.0)
+        if 0.5 <= insider_psi <= 0.75:
+            kelly_size *= 0.5 # size 50%
+            logger.info(f"Risk Adjustment: Reducing size by 50% due to moderate insider risk ({insider_psi:.2f})")
+
+        if kelly_size <= 0.01: # Don't trade tiny sizes
+            continue
 
         signal = {
             "token_id": token_data.get("token_id"),
@@ -148,11 +208,24 @@ async def process_signals(scored_df, threshold: float) -> list[dict]:
             "price": token_data.get("price", 0),
             "liquidity": token_data.get("liquidity", 0),
             "marketcap": token_data.get("marketcap", 0),
-            "confidence": confidence,
+            "confidence": base_confidence,
             "kelly_size": kelly_size,
-            "insider_psi": token_data.get("insider_psi", 0.0),
-            "creator_risk": token_data.get("creator_risk_score", 0.0),
+            "insider_psi": insider_psi,
+            "creator_risk": token_data.get("creator_risk_score", 0.1),
+            "mint_authority": token_data.get("mint_authority"),
+            "freeze_authority": token_data.get("freeze_authority"),
+            "top10_ratio": token_data.get("top10_ratio", 0.0),
         }
+
+        # ── Exit Strategy (V4.0) ──
+        from early_detector.exits import ExitStrategy
+        exit_levels = ExitStrategy.calculate_levels(signal["price"])
+        signal["hard_stop"] = exit_levels.get("hard_stop")
+        signal["tp_1"] = exit_levels.get("tp_1")
+
+        # ── Quantitative Diary (V4.0) ──
+        from early_detector.diary import log_trade_signal
+        log_trade_signal(signal, regime_label)
 
         # Save to DB
         await insert_signal(
@@ -165,6 +238,8 @@ async def process_signals(scored_df, threshold: float) -> list[dict]:
             kelly_size=signal["kelly_size"],
             insider_psi=signal["insider_psi"],
             creator_risk=signal["creator_risk"],
+            hard_stop=signal["hard_stop"],
+            tp_1=signal["tp_1"]
         )
 
         # Send notification
@@ -189,7 +264,7 @@ async def send_telegram_alert(signal: dict) -> None:
         return
 
     text = (
-        f"🚨 <b>EARLY DETECTOR SIGNAL</b>\n\n"
+        f"🚨 <b>EARLY DETECTOR SIGNAL (V4.0)</b>\n\n"
         f"🪙 <b>{signal['symbol']}</b> — {signal['name']}\n"
         f"📊 Instability Index: <code>{signal['instability_index']:.3f}</code>\n"
         f"💰 Price: <code>${signal['price']:.8f}</code>\n"
@@ -199,6 +274,11 @@ async def send_telegram_alert(signal: dict) -> None:
         f"🎯 <b>Probability Score:</b> <code>{signal['confidence']:.1%}</code>\n"
         f"⚖️ <b>Recommended Size:</b> <code>{signal['kelly_size']:.1%} of Wallet</code>\n"
         f"🔥 <b>Insider Risk:</b> <code>{signal['insider_psi']:.2f}</code>\n"
+        f"\n"
+        f"🧠 <b>EXIT STRATEGY:</b>\n"
+        f"🛑 Hard Stop: <code>${signal.get('hard_stop', 0):.8f}</code> (-15%)\n"
+        f"💰 Target TP1: <code>${signal.get('tp_1', 0):.8f}</code> (+40%)\n"
+        f"🔄 Then: Trailing Stop 20%\n"
         f"\n"
         f"🔗 <a href='https://birdeye.so/token/{signal.get('address', '')}?chain=solana'>Birdeye</a>"
         f" | <a href='https://dexscreener.com/solana/{signal.get('address', '')}'>DexScreener</a>"

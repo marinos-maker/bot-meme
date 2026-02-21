@@ -15,7 +15,12 @@ async def get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
         logger.info("Creating database connection pool…")
-        _pool = await asyncpg.create_pool(SUPABASE_DB_URL, min_size=1, max_size=4)
+        _pool = await asyncpg.create_pool(
+            SUPABASE_DB_URL, 
+            min_size=1, 
+            max_size=2,
+            statement_cache_size=0
+        )
         logger.info("Database pool created.")
     return _pool
 
@@ -32,21 +37,61 @@ async def close_pool() -> None:
 # ── Token helpers ─────────────────────────────────────────────────────────────
 
 async def upsert_token(address: str, name: str | None = None,
-                       symbol: str | None = None, narrative: str | None = None) -> str:
+                       symbol: str | None = None, narrative: str | None = None,
+                       creator_address: str | None = None) -> str:
     """Insert a token if it doesn't exist; return its UUID."""
     pool = await get_pool()
     row = await pool.fetchrow(
         """
-        INSERT INTO tokens (address, name, symbol, narrative)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (address) DO UPDATE SET name = COALESCE($2, tokens.name),
-                                            symbol = COALESCE($3, tokens.symbol),
-                                            narrative = COALESCE($4, tokens.narrative)
+        INSERT INTO tokens (address, name, symbol, narrative, creator_address)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (address) DO UPDATE SET 
+            name = CASE 
+                WHEN tokens.name IS NULL OR tokens.name = 'Unknown' OR tokens.name = '' 
+                THEN COALESCE(NULLIF($2, 'Unknown'), tokens.name)
+                ELSE tokens.name 
+            END,
+            symbol = CASE 
+                WHEN tokens.symbol IS NULL OR tokens.symbol = '???' OR tokens.symbol = '' 
+                THEN COALESCE(NULLIF($3, '???'), tokens.symbol)
+                ELSE tokens.symbol 
+            END,
+            narrative = COALESCE(NULLIF($4, 'GENERIC'), tokens.narrative),
+            creator_address = COALESCE($5, tokens.creator_address)
         RETURNING id
         """,
-        address, name, symbol, narrative,
+        address, name, symbol, narrative, creator_address,
     )
     return str(row["id"])
+
+
+# ── Creator helpers ───────────────────────────────────────────────────────────
+
+async def upsert_creator_stats(creator_address: str, stats: dict) -> None:
+    """Track creator history: rug_ratio, avg_lifespan, etc."""
+    pool = await get_pool()
+    await pool.execute(
+        """
+        INSERT INTO creator_performance (creator_address, rug_ratio, avg_lifespan, total_tokens)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (creator_address) DO UPDATE
+            SET rug_ratio = $2, avg_lifespan = $3, total_tokens = $4
+        """,
+        creator_address,
+        stats.get("rug_ratio", 0.0),
+        stats.get("avg_lifespan", 0.0),
+        stats.get("total_tokens", 1),
+    )
+
+
+async def get_creator_stats(creator_address: str) -> dict | None:
+    """Retrieve creator historical performance."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT * FROM creator_performance WHERE creator_address = $1",
+        creator_address
+    )
+    return dict(row) if row else None
 
 
 # ── Metrics helpers ───────────────────────────────────────────────────────────
@@ -127,18 +172,20 @@ async def insert_signal(token_id: str, instability_index: float,
                         entry_price: float, liquidity: float,
                         marketcap: float, confidence: float = 0.5,
                         kelly_size: float = 0.0, insider_psi: float = 0.0,
-                        creator_risk: float = 0.0) -> None:
+                        creator_risk: float = 0.0,
+                        hard_stop: float | None = None,
+                        tp_1: float | None = None) -> None:
     """Record a generated signal."""
     pool = await get_pool()
     await pool.execute(
         """
         INSERT INTO signals (token_id, instability_index, entry_price, 
                             liquidity, marketcap, confidence, kelly_size, 
-                            insider_psi, creator_risk)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                            insider_psi, creator_risk, hard_stop, tp_1)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         """,
         token_id, instability_index, entry_price, liquidity, marketcap, 
-        confidence, kelly_size, insider_psi, creator_risk,
+        confidence, kelly_size, insider_psi, creator_risk, hard_stop, tp_1
     )
     logger.info(f"Signal saved for token {token_id} — II={instability_index:.3f}, PSI={insider_psi:.2f}")
 
@@ -179,30 +226,216 @@ async def upsert_wallet(wallet: str, stats: dict) -> None:
     )
 
 
+async def touch_wallet(wallet: str) -> None:
+    """Update the last_active timestamp for a wallet without changing stats."""
+    pool = await get_pool()
+    await pool.execute(
+        "UPDATE wallet_performance SET last_active = NOW() WHERE wallet = $1",
+        wallet
+    )
+
 async def get_smart_wallets() -> list[str]:
     """Return list of wallet addresses classified as 'smart'."""
+    from early_detector.config import SW_MIN_ROI, SW_MIN_TRADES, SW_MIN_WIN_RATE
     pool = await get_pool()
     rows = await pool.fetch(
         """
         SELECT wallet FROM wallet_performance
-        WHERE avg_roi > 2.5 AND total_trades >= 15 AND win_rate > 0.4
-        """
+        WHERE (avg_roi > $1 AND total_trades >= $2 AND win_rate > $3)
+           OR (avg_roi > 10.0 AND total_trades >= 3)
+        """,
+        SW_MIN_ROI, SW_MIN_TRADES, SW_MIN_WIN_RATE
     )
     return [r["wallet"] for r in rows]
 
 
-async def get_tracked_tokens(limit: int = 20) -> list[str]:
+async def get_tracked_tokens(limit: int = 50) -> list[str]:
     """Return addresses of recently active tokens for wallet profiling."""
     pool = await get_pool()
     rows = await pool.fetch(
         """
-        SELECT DISTINCT t.address
+        SELECT t.address
         FROM tokens t
         JOIN token_metrics_timeseries m ON m.token_id = t.id
-        WHERE m.timestamp > NOW() - INTERVAL '24 hours'
-        ORDER BY t.address
+        WHERE m.timestamp > NOW() - INTERVAL '4 hours'
+        GROUP BY t.address
+        ORDER BY MAX(m.timestamp) DESC
         LIMIT $1
         """,
         limit,
     )
     return [r["address"] for r in rows]
+
+async def log_market_regime(total_volume: float, regime_label: str) -> None:
+    """Log the current market regime for historical analysis."""
+    pool = await get_pool()
+    await pool.execute(
+        "INSERT INTO market_regime (total_volume_5m, regime_label) VALUES ($1, $2)",
+        total_volume, regime_label
+    )
+
+
+async def get_avg_volume_history(minutes: int = 120) -> float:
+    """Calculate average historical batch volume."""
+    pool = await get_pool()
+    val = await pool.fetchval(
+        "SELECT AVG(total_volume_5m) FROM market_regime WHERE timestamp > NOW() - ($1 || ' minutes')::INTERVAL",
+        str(minutes)
+    )
+    return float(val or 0.0)
+
+
+async def get_unprocessed_tokens(limit: int = 20) -> list[str]:
+    """Return addresses of tokens that exist in DB but have no metrics yet.
+    These are typically tokens discovered via Helius webhooks that haven't
+    been passed through the processor pipeline."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT t.address
+        FROM tokens t
+        LEFT JOIN token_metrics_timeseries m ON m.token_id = t.id
+        WHERE m.id IS NULL
+          AND t.created_at > NOW() - INTERVAL '2 hours'
+        ORDER BY t.created_at DESC
+        LIMIT $1
+        """,
+        limit,
+    )
+    return [r["address"] for r in rows]
+
+
+# ── Trades (V5.0) ───────────────────────────────────────────────────────────
+
+async def insert_trade(token_address: str, side: str, amount_sol: float,
+                       amount_token: float, price_entry: float,
+                       tp_pct: float, sl_pct: float, tx_hash: str) -> int | None:
+    """Insert a new trade record. Returns the trade ID."""
+    pool = await get_pool()
+    # Get or create token
+    token_id = await pool.fetchval(
+        "SELECT id FROM tokens WHERE address = $1", token_address
+    )
+    if not token_id:
+        token_id = await pool.fetchval(
+            "INSERT INTO tokens (address) VALUES ($1) ON CONFLICT (address) DO UPDATE SET address = $1 RETURNING id",
+            token_address
+        )
+    
+    trade_id = await pool.fetchval(
+        """
+        INSERT INTO trades (token_id, token_address, side, amount_sol, amount_token,
+                           price_entry, tp_pct, sl_pct, tx_hash_buy, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'OPEN')
+        RETURNING id
+        """,
+        token_id, token_address, side, amount_sol, amount_token,
+        price_entry, tp_pct, sl_pct, tx_hash
+    )
+    return trade_id
+
+
+async def get_open_trades() -> list[dict]:
+    """Get all open trade positions."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT t.id, t.token_address, t.amount_sol, t.amount_token,
+               t.price_entry, t.tp_pct, t.sl_pct, t.roi_pct, t.tx_hash_buy,
+               t.created_at, tk.symbol, tk.name
+        FROM trades t
+        LEFT JOIN tokens tk ON tk.id = t.token_id
+        WHERE t.status = 'OPEN' AND t.side = 'BUY'
+        ORDER BY t.created_at DESC
+        """
+    )
+    return [dict(r) for r in rows]
+
+
+async def close_trade(trade_id: int, status: str, exit_price: float,
+                      roi_pct: float, tx_hash_sell: str) -> None:
+    """Close a trade with final status."""
+    pool = await get_pool()
+    await pool.execute(
+        """
+        UPDATE trades 
+        SET status = $1, price_exit = $2, roi_pct = $3, 
+            tx_hash_sell = $4, closed_at = NOW()
+        WHERE id = $5
+        """,
+        status, exit_price, roi_pct, tx_hash_sell, trade_id
+    )
+
+
+async def get_trade_history(limit: int = 50) -> list[dict]:
+    """Get closed trades history."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT t.id, t.token_address, t.side, t.amount_sol,
+               t.price_entry, t.price_exit, t.tp_pct, t.sl_pct,
+               t.roi_pct, t.status, t.tx_hash_buy, t.tx_hash_sell,
+               t.created_at, t.closed_at, tk.symbol, tk.name
+        FROM trades t
+        LEFT JOIN tokens tk ON tk.id = t.token_id
+        WHERE t.status != 'OPEN'
+        ORDER BY t.closed_at DESC
+        LIMIT $1
+        """,
+        limit
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_positions_with_roi() -> list[dict]:
+    """Get open positions with latest price for ROI calculation."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT t.id, t.token_address, t.amount_sol, t.amount_token,
+               t.price_entry, t.tp_pct, t.sl_pct, t.roi_pct,
+               t.created_at, tk.symbol, tk.name,
+               (SELECT m.price FROM token_metrics_timeseries m 
+                WHERE m.token_id = t.token_id 
+                ORDER BY m.timestamp DESC LIMIT 1) as current_price
+        FROM trades t
+        LEFT JOIN tokens tk ON tk.id = t.token_id
+        WHERE t.status = 'OPEN' AND t.side = 'BUY'
+        ORDER BY t.created_at DESC
+        """
+    )
+    return [dict(r) for r in rows]
+
+
+async def cleanup_old_data(days: int = 7) -> int:
+    """
+    Maintenance: Delete metrics older than N days and orphaned tokens.
+    """
+    pool = await get_pool()
+    try:
+        # 1. Clean metrics (Time-Series)
+        await pool.execute(
+            "DELETE FROM token_metrics_timeseries WHERE timestamp < NOW() - ($1 || ' days')::INTERVAL",
+            str(days)
+        )
+        
+        # 2. Clean orphaned tokens 
+        # (Tokens with no metrics and not linked to any trade)
+        res = await pool.execute(
+            """
+            DELETE FROM tokens 
+            WHERE id NOT IN (SELECT DISTINCT token_id FROM token_metrics_timeseries)
+            AND id NOT IN (SELECT DISTINCT token_id FROM trades)
+            """
+        )
+        
+        deleted_count = 0
+        if res and "DELETE" in res:
+            deleted_count = int(res.split()[-1])
+            
+        logger.info(f"🧹 Database Cleanup: Removed metrics older than {days} days and {deleted_count} orphaned tokens.")
+        return deleted_count
+    except Exception as e:
+        logger.error(f"❌ Cleanup failed: {e}")
+        return 0
+

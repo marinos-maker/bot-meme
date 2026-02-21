@@ -30,27 +30,36 @@ class AlphaEngine:
 
     @staticmethod
     def calculate_kelly_size(win_prob: float, avg_win_multiplier: float, 
+                             avg_loss_multiplier: float = 0.15,
                              fractional_kelly: float = 0.25) -> float:
         """
-        Calculates optimal position size using the Kelly Criterion.
-        f* = p - (1-p)/b
+        Calculates optimal position size using the Refined V4.0 Formula.
+        E = win_rate * avg_win - loss_rate * avg_loss
+        f* = k * (E / avg_loss)
         
         Args:
             win_prob: Probability of winning (0-1).
-            avg_win_multiplier: Average profit ratio (e.g. 1.5 for a 150% gain).
-            fractional_kelly: Safety multiplier (usually 0.1 to 0.5 to avoid ruin).
+            avg_win_multiplier: Average profit (e.g. 0.4 for 40% gain).
+            avg_loss_multiplier: Average loss (e.g. 0.15 for 15% loss).
+            fractional_kelly: Safety multiplier (k = 0.25 default).
         """
         p = win_prob
         q = 1 - p
-        b = avg_win_multiplier
+        w = avg_win_multiplier
+        l = avg_loss_multiplier
         
-        if b <= 0:
+        if l <= 0:
             return 0.0
             
-        kelly = p - (q / b)
+        expectancy = (p * w) - (q * l)
+        
+        if expectancy <= 0:
+            return 0.0
+            
+        kelly = expectancy / l
         
         # Apply fractional Kelly and clip to 0-100%
-        final_size = max(0, kelly) * fractional_kelly
+        final_size = kelly * fractional_kelly
         return float(np.clip(final_size, 0.0, 1.0))
 
     @staticmethod

@@ -51,6 +51,9 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         insider_psi = current.get('insider_psi') or 0.0
         creator_risk = current.get('creator_risk_score') or 0.0
         narrative = current.get('narrative') or 'Unknown'
+        mint_auth = current.get('mint_authority')
+        freeze_auth = current.get('freeze_authority')
+        top10 = current.get('top10_ratio') or 0.0
         
         h_growth = 0
         if len(history) > 1:
@@ -61,32 +64,39 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
 
         # 2. Build Prompt
         prompt = f"""
-        Analyze this Solana Meme Coin signal. Be critical, concise, and act as a pro degen trader.
+        Analyze this Solana Meme Coin signal. Be critical, concise, and act like a professional degen trader.
+        RESPONSE MUST BE IN ENGLISH.
         
         TOKEN DATA:
         - Symbol: {symbol}
         - Address: {address}
-        - Price: ${price:.8f}
+        - Price: ${price:.12f}
         - Market Cap: ${mcap:,.0f}
         - Liquidity: ${liq:,.0f}
         - Holders: {holders} (Growth: {h_growth:+.2f}% since last cycle)
+        - Top 10 Holders Ratio: {top10:.1f}%
         - 5m Volume: ${vol_5m:,.0f}
         - 5m Buys/Sells: {buys_5m}/{sells_5m}
         - Instability Index: {instability:.3f}
         - Insider Risk (PSI): {insider_psi:.2f}
         - Creator Risk: {creator_risk:.2f}
+        - Mint Authority: {"ENABLED (RUG RISK!)" if mint_auth else "Revoked (Safe)"}
+        - Freeze Authority: {"ENABLED (SCAM RISK!)" if freeze_auth else "Revoked (Safe)"}
         - Narrative: {narrative}
         
         LIQUIDITY/MCAP RATIO: {liq / (mcap + 1e-9):.2f}
         
-        Based on these metrics (especially the new Insider Risk and Creator Risk scores), give me a structured verdict. 
-        A high Insider Risk (>0.7) or Creator Risk (>0.7) should be a strong red flag.
-        Return ONLY a JSON object with this exact structure (no markdown formatting, no backticks, just raw JSON):
+        CRITICAL: If Mint Authority or Freeze Authority is ENABLED, the verdict MUST be AVOID.
+        If Top 10 Holders Ratio > 40%, be extremely cautious.
+        Based on these metrics, give a structured verdict.
+        High Insider Risk (>0.7) or high Creator Risk (>0.7) must be a strong red flag.
+        Return ONLY a JSON object with this exact structure (no markdown formatting, no backticks, just raw JSON).
+        The "summary" and "risks" fields MUST be in ENGLISH:
         {{
             "verdict": "BUY" | "WAIT" | "AVOID",
             "rating": (int 0-10),
             "risk_level": "HIGH" | "MEDIUM" | "LOW",
-            "summary": "Concise explanation of your verdict (max 200 chars)",
+            "summary": "Concise explanation of the verdict IN ENGLISH (max 200 chars)",
             "risks": ["Risk factor 1", "Risk factor 2", "Risk factor 3"]
         }}
         """
@@ -106,7 +116,6 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
             client = genai.Client(api_key=GOOGLE_API_KEY)
             for model_name in models_to_try:
                 try:
-                    # Using synchronous call for simplicity as per original implementation
                     response = client.models.generate_content(
                         model=model_name,
                         contents=prompt
@@ -115,7 +124,14 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
                         response_text = response.text
                         break
                 except Exception as e:
-                    logger.warning(f"Failed with {model_name} (new genai): {e}")
+                    err_msg = str(e).upper()
+                    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                        logger.warning(f"Gemini 429 on {model_name}, quota reached.")
+                        # If the first model (usually fastest) is exhausted, wait a tiny bit
+                        import asyncio
+                        await asyncio.sleep(1)
+                    else:
+                        logger.warning(f"Failed with {model_name} (new genai): {e}")
                     continue
         else:
             # Fallback to old library
@@ -131,7 +147,13 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
                     continue
 
         if not response_text:
-            raise Exception("All Gemini models failed")
+            return {
+                "verdict": "WAIT",
+                "rating": 0,
+                "risk_level": "UNKNOWN",
+                "summary": "AI is temporarily overloaded or credits exhausted. Try again in 1 minute.",
+                "risks": ["AI Quota Limiting (429)"]
+            }
         
         # 4. Parse JSON from response text (Robust)
         text = response_text.strip()

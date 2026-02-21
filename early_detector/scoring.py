@@ -7,6 +7,7 @@ import pandas as pd
 from loguru import logger
 from early_detector.config import (
     WEIGHT_SA, WEIGHT_HOLDER, WEIGHT_VS, WEIGHT_SWR, WEIGHT_SELL,
+    WEIGHT_VI,
     SIGNAL_PERCENTILE,
 )
 
@@ -21,34 +22,48 @@ def zscore_robust(series: pd.Series) -> pd.Series:
     Robust Z-Score using Median and Median Absolute Deviation (MAD).
     Neutralizes the impact of outliers in high-volatility environments.
     """
-    median = series.median()
-    mad = (series - median).abs().median()
-    if mad < 1e-7:
-        # Fallback if MAD is 0
-        std = series.std()
-        if std < 1e-9:
-            return pd.Series(0, index=series.index)
-        return (series - median) / (std + 1e-9)
+    s = series.fillna(0.0)
+    median = s.median()
+    mad = (s - median).abs().median()
     
-    return (series - median) / (1.4826 * mad + 1e-9)
+    if mad < 1e-7:
+        # Fallback if MAD is 0 (all values identical or constant)
+        std = s.std()
+        if pd.isna(std) or std < 1e-9:
+            # If all are identical, everything is 0.0 (neutral)
+            return pd.Series(0.0, index=s.index)
+        return (s - median) / (std + 1e-9)
+    
+    return (s - median) / (1.4826 * mad + 1e-9)
 
 
-def detect_regime(df: pd.DataFrame) -> str:
+def detect_regime(df: pd.DataFrame, avg_vol_history: float = 0.0) -> str:
     """
     Detects market regime: 'DEGEN' (turbulent) or 'STABLE' (accumulation).
-    Based on average volatility shift and volume concentration.
+    Refined V4.0: Based on Z-score of Total Batch Volume vs History.
     """
-    if df.empty or "vol_shift" not in df.columns:
+    if df.empty or "volume_5m" not in df.columns:
         return "STABLE"
     
-    avg_vol_shift = df["vol_shift"].mean()
-    if avg_vol_shift > 1.5:
+    # 1. Current Batch Stats
+    total_vol = df["volume_5m"].sum()
+    vol_z = zscore_robust(df["volume_5m"]).mean()
+    
+    # 2. Comparison vs History
+    # If the total batch volume is 2x the historical average, it's DEGEN.
+    if avg_vol_history > 0 and total_vol > (avg_vol_history * 2.0):
         return "DEGEN"
+        
+    # Fallback to local z-score if no history
+    if vol_z > 1.5 or total_vol > 500000:
+        return "DEGEN"
+        
     return "STABLE"
 
 
 def compute_instability(features_df: pd.DataFrame,
-                        weights: dict | None = None) -> pd.DataFrame:
+                        weights: dict | None = None,
+                        avg_vol_history: float = 0.0) -> pd.DataFrame:
     """
     Compute the Instability Index for all tokens in the DataFrame.
     Adaptive weights shift based on detected market regime.
@@ -57,7 +72,7 @@ def compute_instability(features_df: pd.DataFrame,
         features_df["instability"] = pd.Series(dtype=float)
         return features_df
 
-    regime = detect_regime(features_df)
+    regime = detect_regime(features_df, avg_vol_history)
     logger.info(f"Market Regime Detected: {regime}")
 
     # Baseline weights
@@ -65,12 +80,14 @@ def compute_instability(features_df: pd.DataFrame,
     w_holder = weights["w_holder"] if weights else WEIGHT_HOLDER
     w_vs = weights["w_vs"] if weights else WEIGHT_VS
     w_swr = weights["w_swr"] if weights else WEIGHT_SWR
+    w_vi = weights["w_vi"] if weights else WEIGHT_VI
     w_sell = weights["w_sell"] if weights else WEIGHT_SELL
 
     # Regime adjustments
     if regime == "DEGEN":
-        # In degen mode, prioritize SWR and SA over Holder growth (which might be bots)
+        # In degen mode, prioritize SWR, VI and SA
         w_swr *= 1.5
+        w_vi *= 1.8
         w_sa *= 1.2
         w_holder *= 0.8
     
@@ -81,6 +98,7 @@ def compute_instability(features_df: pd.DataFrame,
     df["z_holder"] = zscore_robust(df["holder_acc"])
     df["z_vs"] = zscore_robust(df["vol_shift"])
     df["z_swr"] = zscore_robust(df["swr"])
+    df["z_vi"] = zscore_robust(df["vol_intensity"])
     df["z_sell"] = zscore_robust(df["sell_pressure"])
 
     # Instability Index
@@ -89,13 +107,25 @@ def compute_instability(features_df: pd.DataFrame,
         + w_holder * df["z_holder"]
         + w_vs * df["z_vs"]
         + w_swr * df["z_swr"]
+        + w_vi * df["z_vi"]
         - w_sell * df["z_sell"]
     )
 
+    # V4.2 Robustness: Add a tiny epsilon for tokens that at least have some real data
+    # This prevents the "all zeros" trap when many RPC calls fail.
+    epsilon = 0.0001
+    has_data_mask = (df["sa"] > 0) | (df["holder_acc"] > 0) | (df["vol_intensity"] > 0)
+    df.loc[has_data_mask, "instability"] += epsilon
+
+    # Momentum dII/dt (Phase 4.0)
+    if "last_instability" in df.columns:
+        df["delta_instability"] = df["instability"] - df["last_instability"]
+    else:
+        df["delta_instability"] = 0.0
+
     logger.debug(
         f"Instability computed for {len(df)} tokens — "
-        f"mean={df['instability'].mean():.3f}, "
-        f"max={df['instability'].max():.3f}"
+        f"mean={df['instability'].mean():.3f}, delta_mean={df['delta_instability'].mean():.3f}"
     )
     return df
 
@@ -107,8 +137,10 @@ def get_signal_threshold(instability_series: pd.Series,
     Default is 95th percentile across all active tokens.
     """
     pct = percentile if percentile is not None else SIGNAL_PERCENTILE
-    if instability_series.empty:
-        return float("inf")
-    threshold = float(np.percentile(instability_series.dropna(), pct * 100))
-    logger.debug(f"Signal threshold (P{int(pct*100)}): {threshold:.3f}")
+    clean_series = instability_series.dropna()
+    if clean_series.empty:
+        return 99.0  # Fallback high threshold if no valid scores
+        
+    threshold = float(np.percentile(clean_series, pct * 100))
+    logger.info(f"Signal threshold (P{int(pct*100)}): {threshold:.3f}")
     return threshold

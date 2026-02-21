@@ -444,6 +444,8 @@
         table {
             width: 100%;
             border-collapse: collapse;
+            table-layout: fixed;
+            /* Force fixed layout for alignment */
         }
 
         th {
@@ -457,6 +459,74 @@
             border-bottom: 1px solid var(--border);
             background: rgba(0, 0, 0, 0.2);
         }
+
+        /* Column Widths */
+        th:nth-child(1),
+        td:nth-child(1) {
+            width: 140px;
+        }
+
+        /* Token */
+        th:nth-child(2),
+        td:nth-child(2) {
+            width: 100px;
+        }
+
+        /* Narrative */
+        th:nth-child(3),
+        td:nth-child(3) {
+            width: 100px;
+        }
+
+        /* Price */
+        th:nth-child(4),
+        td:nth-child(4) {
+            width: 90px;
+        }
+
+        /* MCAP */
+        th:nth-child(5),
+        td:nth-child(5) {
+            width: 90px;
+        }
+
+        /* Liq */
+        th:nth-child(6),
+        td:nth-child(6) {
+            width: 80px;
+        }
+
+        /* Holders */
+        th:nth-child(7),
+        td:nth-child(7) {
+            width: 90px;
+        }
+
+        /* Vol */
+        th:nth-child(8),
+        td:nth-child(8) {
+            width: 80px;
+        }
+
+        /* B/S */
+        th:nth-child(9),
+        td:nth-child(9) {
+            width: 80px;
+        }
+
+        /* II */
+        th:nth-child(10),
+        td:nth-child(10) {
+            width: 100px;
+        }
+
+        /* Analyst */
+        th:nth-child(11),
+        td:nth-child(11) {
+            width: 90px;
+        }
+
+        /* Action */
 
         td {
             padding: 12px 16px;
@@ -599,8 +669,27 @@
         .action-card p {
             font-size: 13px;
             color: var(--text-muted);
-            margin-bottom: 16px;
             line-height: 1.5;
+            margin-bottom: 20px;
+        }
+
+        .analyst-btn {
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--accent);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .analyst-btn:hover {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
         }
 
         .action-btn {
@@ -709,8 +798,15 @@
 
         .toast.info {
             background: rgba(99, 102, 241, 0.15);
-            color: var(--accent);
-            border-color: rgba(99, 102, 241, 0.3);
+        }
+
+        .row-buyable {
+            background: rgba(16, 185, 129, 0.1) !important;
+            box-shadow: inset 4px 0 0 var(--green);
+        }
+
+        .row-buyable:hover {
+            background: rgba(16, 185, 129, 0.15) !important;
         }
 
         .toast.error {
@@ -1072,6 +1168,15 @@
             </div>
         </div>
         <div class="header-right">
+            <div id="solPriceBadge"
+                style="background:var(--bg-card); border:1px solid var(--border); padding:4px 12px; border-radius:8px; font-size:12px; font-family:monospace; display:flex; align-items:center; gap:8px;">
+                <span style="color:var(--text-muted)">SOL:</span>
+                <span id="solPriceText" style="color:var(--green); font-weight:700;">$0.00</span>
+            </div>
+            <div class="wallet-balance" id="walletBalance"
+                style="display:flex;align-items:center;gap:8px;padding:6px 14px;background:rgba(99,102,241,0.1);border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--text-secondary);">
+                💰 <span id="solBalance">—</span> SOL
+            </div>
             <div class="auto-refresh-toggle">
                 <span>Auto-refresh</span>
                 <div class="toggle-switch active" id="autoRefreshToggle" onclick="toggleAutoRefresh()"></div>
@@ -1089,6 +1194,7 @@
         <div class="tabs">
             <button class="tab active" onclick="switchTab('overview')">📊 Overview</button>
             <button class="tab" onclick="switchTab('signals')">⚡ Signals</button>
+            <button class="tab" onclick="switchTab('positions')">💰 Posizioni</button>
             <button class="tab" onclick="switchTab('tokens')">🪙 Tokens</button>
             <button class="tab" onclick="switchTab('wallets')">👛 Wallets</button>
             <button class="tab" onclick="switchTab('actions')">⚙️ Actions</button>
@@ -1160,6 +1266,60 @@
                         <tbody id="signalsTable"></tbody>
                     </table>
                 </div>
+            </div>
+        </div>
+
+        <!-- POSITIONS SECTION -->
+        <div class="section" id="section-positions">
+            <div class="kpi-grid" style="margin-bottom:20px;">
+                <div class="kpi-card">
+                    <div class="kpi-label">Open Positions</div>
+                    <div class="kpi-value" id="kpiOpenTrades">0</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Wallet Balance</div>
+                    <div class="kpi-value" id="kpiWalletBal">— SOL</div>
+                </div>
+            </div>
+            <div class="table-container">
+                <div class="table-header">
+                    <div class="table-title">💰 Open Positions</div>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Token</th>
+                            <th>Invested</th>
+                            <th>Entry Price</th>
+                            <th>Current Price</th>
+                            <th>ROI</th>
+                            <th>TP</th>
+                            <th>SL</th>
+                            <th>Opened</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positionsTable"></tbody>
+                </table>
+            </div>
+            <div class="table-container" style="margin-top:20px;">
+                <div class="table-header">
+                    <div class="table-title">📜 Trade History</div>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Token</th>
+                            <th>Invested</th>
+                            <th>Entry</th>
+                            <th>Exit</th>
+                            <th>ROI</th>
+                            <th>Outcome</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyTable"></tbody>
+                </table>
             </div>
         </div>
 
@@ -1248,6 +1408,38 @@
             </div>
         </div>
 
+        <!-- ANALYTICS SECTION -->
+        <div class="section" id="section-analytics">
+            <div class="analytics-container">
+                <div class="heatmap-card">
+                    <div class="table-header" style="border:none; padding:0 0 16px 0;">
+                        <div class="table-title">🔥 Market Instability Heatmap</div>
+                        <div class="last-update" id="heatmapTime">Real-time</div>
+                    </div>
+                    <div class="heatmap-grid" id="heatmapGrid">
+                        <!-- Heat cells injected here -->
+                    </div>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 24px;">
+                    <div class="kpi-card" style="margin-bottom:0;">
+                        <div class="kpi-label">Narrative Dominance</div>
+                        <div id="narrativeContainer" style="margin-top: 10px;">
+                            <!-- Narratives injected here -->
+                        </div>
+                    </div>
+
+                    <div class="table-container">
+                        <div class="table-header">
+                            <div class="table-title">📈 Explosive Volume</div>
+                        </div>
+                        <div class="explosive-list" id="explosiveList" style="padding: 12px;">
+                            <!-- Explosive items injected here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- AI Analyst Modal -->
@@ -1278,8 +1470,53 @@
             </div>
 
             <button class="action-btn primary" id="analystBuyBtn" onclick="" style="margin-top: 20px;">
-                🚀 Open Jupiter to Trade
+                ⚡ Execute Buy via PumpPortal
             </button>
+        </div>
+    </div>
+
+    <!-- TRADE MODAL -->
+    <div class="modal-overlay" id="tradeModal" style="display:none;"
+        onclick="if(event.target === this) closeTradeModal()">
+        <div class="modal" style="max-width:420px;">
+            <button class="modal-close" onclick="closeTradeModal()">&times;</button>
+            <div class="verdict-header" style="margin-bottom:16px;">
+                <div class="verdict-title">🟢 BUY <span id="tradeTokenName">TOKEN</span></div>
+            </div>
+            <input type="hidden" id="tradeTokenAddr">
+            <div style="display:grid;gap:12px;">
+                <div>
+                    <label style="color:var(--text-secondary);font-size:12px;display:block;margin-bottom:4px;">Amount
+                        (SOL)</label>
+                    <input type="number" id="tradeAmount" value="0.1" min="0.001" step="0.01"
+                        style="width:100%;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:16px;">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <div>
+                        <label style="color:var(--text-secondary);font-size:12px;display:block;margin-bottom:4px;">Take
+                            Profit (%)</label>
+                        <input type="number" id="tradeTp" value="50" min="1" step="5"
+                            style="width:100%;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--green);font-size:14px;">
+                    </div>
+                    <div>
+                        <label style="color:var(--text-secondary);font-size:12px;display:block;margin-bottom:4px;">Stop
+                            Loss (%)</label>
+                        <input type="number" id="tradeSl" value="30" min="1" step="5"
+                            style="width:100%;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--red);font-size:14px;">
+                    </div>
+                </div>
+                <div>
+                    <label style="color:var(--text-secondary);font-size:12px;display:block;margin-bottom:4px;">Slippage
+                        (BPS) — 100 = 1%</label>
+                    <input type="number" id="tradeSlippage" value="200" min="50" step="50"
+                        style="width:100%;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;">
+                </div>
+                <button id="executeBuyBtn" onclick="executeBuyFromModal()"
+                    style="padding:14px;background:var(--green);color:#000;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;transition:all 0.2s;">
+                    🟢 CONFERMA BUY
+                </button>
+                <div id="tradeStatus" style="text-align:center;font-size:13px;min-height:20px;"></div>
+            </div>
         </div>
     </div>
 
@@ -1329,7 +1566,7 @@
 
         function startAutoRefresh() {
             clearInterval(refreshInterval);
-            refreshInterval = setInterval(refreshAll, 30000);
+            refreshInterval = setInterval(refreshAll, 5000);
         }
 
         // ── Data Loading ───────────────────────────────────────────────────────────
@@ -1400,40 +1637,49 @@
                 return;
             }
 
-            tbody.innerHTML = data.signals.map(s => `
-            <tr>
-                <td>
-                    <div class="token-info">
-                        <span class="token-name">${s.token_symbol}</span>
-                        <span class="token-address">
-                            ${s.token_address.slice(0, 8)}…
-                            <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="copyToClipboard('${s.token_address}')">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                            </svg>
-                        </span>
-                    </div>
-                </td>
-                <td><span class="score-badge ${getScoreClass(s.instability_index)}">${s.instability_index.toFixed(3)}</span></td>
-                <td class="mono">$${formatNum(s.entry_price)}</td>
-                <td class="mono">$${formatNum(s.liquidity)}</td>
-                <td class="mono">$${formatNum(s.marketcap)}</td>
-                <td class="mono" style="color:${s.insider_psi > 0.5 ? 'var(--red)' : 'var(--text-secondary)'}">${(s.insider_psi).toFixed(2)}</td>
-                <td class="mono" style="color:var(--green)">${(s.confidence * 100).toFixed(0)}%</td>
-                <td class="mono" style="color:var(--accent)">${(s.kelly_size * 100).toFixed(1)}%</td>
-                <td class="last-update">${formatTime(s.timestamp)}</td>
-                <td>
-                    <button class="analyst-btn" onclick="openAnalyst('${s.token_address}', '${s.token_symbol}')">
-                        🧠 Analyze
-                    </button>
-                </td>
-                <td>
-                    <a href="${s.buy_url}" target="_blank" class="buy-btn">
-                        🚀 Buy
-                    </a>
-                </td>
-            </tr>
-        `).join('');
+            tbody.innerHTML = data.signals.map(s => {
+                const displayName = s.token_symbol === "???" ? s.token_address.slice(0, 4) : s.token_symbol;
+                // V4.5: More restrictive highlighting (only top 20% of signals)
+                const isBuyable = s.confidence >= 0.70 || (s.instability_index > 1000 && s.confidence > 0.60);
+                return `
+                <tr class="${isBuyable ? 'row-buyable' : ''}">
+                    <td>
+                        <div class="token-info">
+                            <span class="token-name">${displayName}</span>
+                            <span class="token-address">
+                                ${s.token_address.slice(0, 6)}…
+                                <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="copyToClipboard('${s.token_address}')">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                </svg>
+                            </span>
+                        </div>
+                    </td>
+                    <td><span class="score-badge ${getScoreClass(s.instability_index)}">${s.instability_index.toFixed(3)}</span></td>
+                    <td class="mono">$${formatNum(s.entry_price)}</td>
+                    <td class="mono">$${formatNum(s.liquidity)}</td>
+                    <td class="mono">$${formatNum(s.marketcap)}</td>
+                    <td class="mono" style="color:${s.insider_psi > 0.5 ? 'var(--red)' : 'var(--text-secondary)'}">${(s.insider_psi).toFixed(2)}</td>
+                    <td class="mono" style="color:var(--green)">${(s.confidence * 100).toFixed(0)}%</td>
+                    <td class="mono" style="color:var(--accent)">${(s.kelly_size * 100).toFixed(1)}%</td>
+                    <td class="last-update">${formatTime(s.timestamp)}</td>
+                    <td>
+                        <button class="analyst-btn" onclick="openAnalyst('${s.token_address}', '${displayName}')">
+                            🧠 Analyze
+                        </button>
+                    </td>
+                    <td>
+                        <div style="display:flex;gap:4px;">
+                            <button class="buy-btn" onclick="openTradeModal('${s.token_address}', '${displayName}')">
+                                🟢 BUY
+                            </button>
+                            <button class="buy-btn" style="background:var(--red);" onclick="executeQuickSell('${s.token_address}', '${displayName}')">
+                                🔴 SELL
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `}).join('');
         }
 
         async function loadTokens() {
@@ -1456,42 +1702,54 @@
                 return;
             }
 
-            tbody.innerHTML = data.tokens.map(t => `
-            <tr>
-                <td>
-                    <div class="token-info">
-                        <span class="token-name">${t.symbol}</span>
-                        <span class="token-address">
-                            ${t.address.slice(0, 8)}…${t.address.slice(-4)}
-                            <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="copyToClipboard('${t.address}')">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                            </svg>
-                        </span>
-                    </div>
-                </td>
-                <td class="mono">$${formatNum(t.price)}</td>
-                <td class="mono">$${formatNum(t.marketcap)}</td>
-                <td class="mono">$${formatNum(t.liquidity)}</td>
-                <td class="mono">${t.holders.toLocaleString()}</td>
-                <td class="mono">$${formatNum(t.volume_5m)}</td>
-                <td>
-                    <span class="positive">${t.buys_5m}</span> /
-                    <span class="negative">${t.sells_5m}</span>
-                </td>
-                <td><span class="score-badge ${getScoreClass(t.instability_index)}">${t.instability_index.toFixed(3)}</span></td>
-                <td>
-                    <button class="analyst-btn" onclick="openAnalyst('${t.address}', '${t.symbol}')">
-                        🧠 Analyze
-                    </button>
-                </td>
-                <td>
-                    <a href="${t.buy_url}" target="_blank" class="buy-btn">
-                        🚀 Buy
-                    </a>
-                </td>
-            </tr>
-        `).join('');
+            tbody.innerHTML = data.tokens.map(t => {
+                const displayName = t.symbol === "???" ? t.address.slice(0, 4) : t.symbol;
+                // V4.5: High standards for non-signal tokens
+                const isBuyable = t.instability_index > 100.0 && t.liquidity > 5000 && t.marketcap < 1000000;
+                return `
+                <tr class="${isBuyable ? 'row-buyable' : ''}">
+                    <td>
+                        <div class="token-info">
+                            <span class="token-name">${displayName}</span>
+                            <span class="token-address">
+                                ${t.address.slice(0, 6)}…${t.address.slice(-3)}
+                                <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="copyToClipboard('${t.address}')">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                </svg>
+                            </span>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="narrative-tag narrative-${t.narrative.toLowerCase()}">${t.narrative}</span>
+                    </td>
+                    <td class="mono">$${formatNum(t.price)}</td>
+                    <td class="mono">$${formatNum(t.marketcap)}</td>
+                    <td class="mono">$${formatNum(t.liquidity)}</td>
+                    <td class="mono">${t.holders ? t.holders.toLocaleString() : '0'}</td>
+                    <td class="mono">$${formatNum(t.volume_5m)}</td>
+                    <td>
+                        <span class="positive">${t.buys_5m}</span> /
+                        <span class="negative">${t.sells_5m}</span>
+                    </td>
+                    <td><span class="score-badge ${getScoreClass(t.instability_index)}">${t.instability_index.toFixed(2)}</span></td>
+                    <td>
+                        <button class="analyst-btn" onclick="openAnalyst('${t.address}', '${displayName}')">
+                            🧠 Analyze
+                        </button>
+                    </td>
+                    <td>
+                        <div style="display:flex;gap:4px;">
+                            <button class="buy-btn" onclick="openTradeModal('${t.address}', '${displayName}')">
+                                🚀 Buy
+                            </button>
+                            <button class="buy-btn" style="background:var(--red);" onclick="executeQuickSell('${t.address}', '${displayName}')">
+                                🔴 Sell
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `}).join('');
         }
 
         async function loadWallets() {
@@ -1539,7 +1797,10 @@
             document.getElementById('analystProgress').style.width = '0%';
             document.getElementById('analystSummary').textContent = 'Scanning on-chain signals with Gemini 1.5 Flash...';
             document.getElementById('analystRisks').innerHTML = '';
-            document.getElementById('analystBuyBtn').onclick = () => window.open(`https://jup.ag/swap/SOL-${address}`, '_blank');
+            document.getElementById('analystBuyBtn').onclick = () => {
+                closeAnalyst();
+                openTradeModal(address, symbol);
+            };
 
             const data = await fetchAPI(`/api/analyze/${address}`);
             if (!data) {
@@ -1594,7 +1855,8 @@
             if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
             if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K';
             if (n >= 1) return n.toFixed(2);
-            if (n >= 0.001) return n.toFixed(4);
+            if (n >= 0.0001) return n.toFixed(4);
+            if (n >= 0.0000000001) return n.toFixed(10).replace(/\.?0+$/, ""); // Trim trailing zeros
             return n.toExponential(2);
         }
 
@@ -1646,7 +1908,10 @@
                 loadSignals(),
                 loadTokens(),
                 loadWallets(),
-                fetchAnalytics(), // Added for analytics tab
+                loadPositions(),
+                loadWalletBalance(),
+                loadSolPrice(),
+                fetchAnalytics(),
             ]);
         }
 
@@ -1654,6 +1919,161 @@
         // Initialize
         refreshAll();
         startAutoRefresh();
+
+        // ── Trading Functions ──────────────────────────────────────────────────────
+        function openTradeModal(address, symbol) {
+            const modal = document.getElementById('tradeModal');
+            document.getElementById('tradeTokenAddr').value = address;
+            document.getElementById('tradeTokenName').textContent = symbol;
+            modal.style.display = 'flex';
+        }
+
+        function closeTradeModal() {
+            document.getElementById('tradeModal').style.display = 'none';
+        }
+
+        async function executeBuyFromModal() {
+            const address = document.getElementById('tradeTokenAddr').value;
+            const amountSol = parseFloat(document.getElementById('tradeAmount').value);
+            const tp = parseFloat(document.getElementById('tradeTp').value);
+            const sl = parseFloat(document.getElementById('tradeSl').value);
+            const slippage = parseInt(document.getElementById('tradeSlippage').value);
+            const btn = document.getElementById('executeBuyBtn');
+            const status = document.getElementById('tradeStatus');
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Executing...';
+            status.textContent = '';
+
+            try {
+                const resp = await fetch('/api/trade/buy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ address, amount_sol: amountSol, tp_pct: tp, sl_pct: sl, slippage_bps: slippage })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    status.innerHTML = `<span style="color:var(--green)">✅ BUY completed! TX: ${data.tx_hash?.slice(0, 16)}...</span>`;
+                    setTimeout(() => { closeTradeModal(); refreshAll(); }, 2000);
+                } else {
+                    status.innerHTML = `<span style="color:var(--red)">❌ ${data.error}</span>`;
+                }
+            } catch (e) {
+                status.innerHTML = `<span style="color:var(--red)">❌ Error: ${e.message}</span>`;
+            }
+            btn.disabled = false;
+            btn.textContent = '🟢 CONFIRM BUY';
+        }
+
+        async function manualSell(tradeId, address) {
+            if (!confirm('Are you sure you want to sell this position?')) return;
+            try {
+                const resp = await fetch('/api/trade/sell', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ address, trade_id: tradeId })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    showToast('✅ SELL completed!', 'success');
+                    refreshAll();
+                } else {
+                    showToast('❌ SELL failed: ' + data.error, 'error');
+                }
+            } catch (e) {
+                showToast('❌ Error: ' + e.message, 'error');
+            }
+        }
+
+        async function executeQuickSell(address, symbol) {
+            if (!confirm(`Sei sicuro di voler vendere il 100% di ${symbol}?`)) return;
+            showToast(`Vendita di ${symbol} in corso...`, 'info');
+            try {
+                const resp = await fetch('/api/trade/sell', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ address })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    showToast(`✅ ${symbol} venduto con successo!`, 'success');
+                    refreshAll();
+                } else {
+                    showToast('❌ Errore: ' + data.error, 'error');
+                }
+            } catch (e) {
+                showToast('❌ Errore di rete: ' + e.message, 'error');
+            }
+        }
+
+        async function loadPositions() {
+            const data = await fetchAPI('/api/trade/positions');
+            const history = await fetchAPI('/api/trade/history');
+
+            // Open positions
+            const tbody = document.getElementById('positionsTable');
+            const kpiOpen = document.getElementById('kpiOpenTrades');
+            if (data && data.positions) {
+                kpiOpen.textContent = data.positions.length;
+                if (data.positions.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="icon">📭</div><h3>No open positions</h3><p>Click BUY on a signal to open your first position.</p></div></td></tr>';
+                } else {
+                    tbody.innerHTML = data.positions.map(p => {
+                        const roiColor = p.roi_pct >= 0 ? 'var(--green)' : 'var(--red)';
+                        return `<tr>
+                            <td><div class="token-info"><span class="token-name">${p.symbol}</span><span class="token-address">${p.token_address.slice(0, 6)}…</span></div></td>
+                            <td class="mono">${p.amount_sol.toFixed(3)} SOL</td>
+                            <td class="mono">$${formatNum(p.price_entry)}</td>
+                            <td class="mono">$${formatNum(p.current_price)}</td>
+                            <td class="mono" style="color:${roiColor};font-weight:700">${p.roi_pct >= 0 ? '+' : ''}${p.roi_pct.toFixed(1)}%</td>
+                            <td class="mono" style="color:var(--green)">+${p.tp_pct}%</td>
+                            <td class="mono" style="color:var(--red)">-${p.sl_pct}%</td>
+                            <td class="last-update">${formatTime(p.created_at)}</td>
+                            <td><button class="buy-btn" style="background:var(--red);" onclick="manualSell(${p.id}, '${p.token_address}')">🔴 SELL</button></td>
+                        </tr>`;
+                    }).join('');
+                }
+            }
+
+            // History
+            const htbody = document.getElementById('historyTable');
+            if (history && history.trades) {
+                if (history.trades.length === 0) {
+                    htbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><p>No completed trades.</p></div></td></tr>';
+                } else {
+                    htbody.innerHTML = history.trades.map(t => {
+                        const statusIcon = t.status === 'TP_HIT' ? '🎯' : t.status === 'SL_HIT' ? '🛑' : '✋';
+                        const roiColor = t.roi_pct >= 0 ? 'var(--green)' : 'var(--red)';
+                        return `<tr>
+                            <td>${t.symbol}</td>
+                            <td class="mono">${t.amount_sol.toFixed(3)} SOL</td>
+                            <td class="mono">$${formatNum(t.price_entry)}</td>
+                            <td class="mono">$${formatNum(t.price_exit)}</td>
+                            <td class="mono" style="color:${roiColor};font-weight:700">${t.roi_pct >= 0 ? '+' : ''}${t.roi_pct.toFixed(1)}%</td>
+                            <td>${statusIcon} ${t.status}</td>
+                            <td class="last-update">${formatTime(t.closed_at)}</td>
+                        </tr>`;
+                    }).join('');
+                }
+            }
+        }
+
+        async function loadWalletBalance() {
+            const data = await fetchAPI('/api/wallet/balance');
+            if (data) {
+                const bal = data.balance?.toFixed(5) || '0.00000';
+                document.getElementById('solBalance').textContent = bal;
+                const kpiBal = document.getElementById('kpiWalletBal');
+                if (kpiBal) kpiBal.textContent = bal + ' SOL';
+            }
+        }
+
+        async function loadSolPrice() {
+            const data = await fetchAPI('/api/trade/sol-price');
+            if (data && data.price) {
+                document.getElementById('solPriceText').textContent = `$${data.price.toFixed(2)}`;
+            }
+        }
 
         // Analytics Logic
         async function fetchAnalytics() {

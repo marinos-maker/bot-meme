@@ -1,37 +1,39 @@
-# 🚀 Solana Early Detector v3.0 — Institutional Grade
+# 🚀 Solana Early Detector v5.0 — Automated Trading Module
 
-Bot Python avanzato per il rilevamento di meme coin su Solana. Basato su un **Instability Index** asincrono e cross-sectional, potenziato da risk management istituzionale e intelligenza on-chain.
+Bot Python avanzato per il rilevamento e **trading automatico** di meme coin su Solana. Basato su un **Instability Index** asincrono, potenziato da risk management istituzionale, intelligenza on-chain e **esecuzione ordini ultra-veloce**.
 
-## 🌟 Novità v3.0 (Institutional Grade)
+## 🌟 Novità v5.0 (Automated Trading)
 
-Il sistema è stato completamente riscritto con un'architettura **Pro-Level**:
+Il sistema ora include un modulo di trading completo integrato direttamente nel dashboard:
+
+### 🤖 Trading Engine & Execution
+- **Jupiter V6 Swap**: Integrazione diretta con Jupiter Aggregator per trovare sempre il miglior prezzo (Best Route).
+- **Auto-Trade**: Esecuzione automatica dei segnali AI (BUY) con importi configurabili.
+- **TP/SL Monitor**: Worker asincrono che monitora le posizioni ogni 10 secondi e vende automaticamente su Target Profit o Stop Loss.
+- **Direct Dashboard Trading**: Pulsanti BUY/SELL rapidi direttamente dall'interfaccia web.
 
 ### 🧠 Alpha Engine (Optimization)
 - **Bayesian Probability**: Ogni segnale riceve una "Confidence Score" (Win P) aggiornata dinamicamente.
 - **Kelly Criterion**: Calcolo della dimensione ottimale della posizione (Size) in base al rischio.
-- **Monte Carlo Simulation**: Analisi di 10.000 scenari per calcolare il VaR (Value at Risk) e il Drawdown potenziale.
+- **Monte Carlo Simulation**: Analisi di 10.000 scenari per calcolare il VaR (Value at Risk).
 
-### 📈 Matematica Robusta (Phase 1 Cleanup)
-- **Robust Z-Scores (Median/MAD)**: Standardizzazione dei dati immune agli outlier estremi del mercato meme.
-- **Regime Detection**: Il bot rileva automaticamente stati **DEGEN** (volatili) o **STABLE** (accumulo) e adatta i pesi dello scoring in tempo reale.
-
-### 🕵️ Intelligence Specialistica (Phase 2 Cleanup)
-- **Coordinated Entry (Louvain-lite)**: Rilevamento di lanci "bundled" (wallet multipli che comprano nello stesso secondo).
-- **Insider Probability (Psi)**: Score di rischio basato sulla coordinazione e sulla "freschezza" dei wallet.
-- **Narrative Manager**: Classificazione automatica dei token (AI, Politics, Meme-Animals, ecc.) tramite analisi lessicale.
+### 📈 Matematica Robusta
+- **Regime Detection**: Il bot rileva stati **DEGEN** (volatili) o **STABLE** e adatta i pesi dello scoring.
+- **Insider Probability**: Score di rischio basato sulla coordinazione dei wallet nei primi minuti del lancio.
 
 ## Architettura del Progetto
 
 ```
 early_detector/
+├── trader.py           # Trading Engine (Jupiter V6 + Helius RPC)
+├── tp_sl_monitor.py    # TP/SL Background Worker
 ├── optimization.py     # Alpha Engine (Bayesian, Kelly, Monte Carlo)
 ├── narrative.py        # Classificazione Narrative
-├── scoring.py          # robust z-scores + Detect Regime
-├── smart_wallets.py    # Cluster (K-Means) + Coordinated Entry
+├── scoring.py          # Robust Z-Scores + Regime Detection
+├── smart_wallets.py    # Cluster Analysis + Copy Trading Logic
 ├── analyst.py          # AI Analyst (Google Gemini 2.0 Flash)
-├── backtest.py         # Motore di simulazione storica
-├── dashboard.py        # Web Server Pro Dashboard
-└── main.py             # Orchestratore asincrono (v3.0 Async)
+├── dashboard.py        # Web Server Pro Dashboard + Trading API
+└── main.py             # Orchestratore asincrono (v4.0 Async)
 ```
 
 ## Quick Start
@@ -46,32 +48,47 @@ pip install -r requirements.txt
 ```
 
 ### 2. Configurazione (.env)
-Configura `BIRDEYE_API_KEY`, `HELIUS_API_KEY`, `SUPABASE_DB_URL` e `GOOGLE_API_KEY`.
+Aggiungi le chiavi necessarie nel file `.env`:
+```bash
+# Data Providers
+BIRDEYE_API_KEY=la_tua_chiave
+HELIUS_API_KEY=la_tua_chiave
+SUPABASE_DB_URL=postgresql://...
+GOOGLE_API_KEY=la_tua_chiave
+
+# Trading (NUOVO v5.0)
+WALLET_PRIVATE_KEY=la_tua_chiave_phantom_base58
+TRADE_AMOUNT_SOL=0.1
+DEFAULT_TP_PCT=50
+DEFAULT_SL_PCT=30
+AUTO_TRADE_ENABLED=true
+```
 
 ### 3. Migrazione Database
 ```bash
-python migrate_sync.py
+# Esegui lo script SQL migrations/002_trades.sql nel tuo DB Supabase
 ```
 
 ### 4. Avvio
 ```bash
-# Avvia il bot (Cervello)
+# Avvia il bot (Cervello + Trading Auto)
 python -m early_detector.main
 
-# Avvia la dashboard (Occhi)
+# Avvia la dashboard (Interfaccia Trading)
 python -m early_detector.dashboard
 ```
 
-## Dashboard Pro
-Accedi a `http://localhost:8050` per visualizzare:
-- **Heatmap di Instabilità**: Per vedere dove si concentra il volume.
-- **Narrative Flow**: Dominanza dei temi (es. AI vs Dog coins).
-- **Pro Signals**: Segnali con Win Probability, Kelly Size e Insider Risk.
+## Dashboard Pro (v5.0)
+Accedi a `http://localhost:8050`:
+- **💰 Posizioni**: Tabella in tempo reale di tutti i trade aperti con ROI live.
+- **⚡ Segnali**: Clicca su 🟢 BUY per aprire posizioni manualmente.
+- **🪙 Wallet**: Monitoraggio saldo SOL e storico performance.
+- **Heatmap**: Visualizzazione grafica della liquidità e instabilità.
 
-## 🛡️ Sicurezza e Risk Management
-- **LP Lock Check**: Analisi dello stato dei pool Raydium/Pump.fun.
-- **Creator Risk**: Analisi dello storico del creatore per identificare serial ruggers.
-- **Auto-Wait**: Segnali filtrati se la Win Probability è < 60%.
+## 🛡️ Sicurezza
+- **Circuit Breakers**: Protezione API anti-ban (429) per Helius e Birdeye.
+- **Key Management**: Le chiavi private sono caricate solo da variabili d'ambiente e mai loggate.
+- **Slippage Protection**: Impostazioni di default (2%) per evitare front-running eccessivo.
 
 ---
-**⚠️ Disclaimer**: Questo software è a scopo puramente educativo. Il trading di criptovalute ad alta volatilità comporta il rischio di perdita totale del capitale.
+**⚠️ Disclaimer**: Questo software gestisce fondi reali e criptovalute ad alta volatilità. Usare con cautela e a proprio rischio. L'autore non è responsabile per eventuali perdite finanziarie.

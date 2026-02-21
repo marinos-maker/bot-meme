@@ -130,38 +130,65 @@ def detect_coordinated_entry(trades: list[dict], window_sec: int = 15) -> list[s
     return list(coordinated)
 
 
+def compute_p_insider(early_score: float, funding_overlap: float, 
+                      buy_ratio_120s: float, holder_delta: float) -> float:
+    """
+    Sigmoid-based Insider Probability (V4.0 Game Changer).
+    
+    P_insider = 1 / (1 + exp(-z))
+    z = w1*early + w2*funding + w3*buy_ratio + w4*holder_delta - bias
+    """
+    # Weights for the sigmoid model
+    w_early = 3.0
+    w_funding = 4.0
+    w_buy_ratio = 2.5
+    w_holder_delta = 2.0
+    bias = 3.5 # Threshold bias
+    
+    z = (w_early * early_score + 
+         w_funding * funding_overlap + 
+         w_buy_ratio * buy_ratio_120s + 
+         w_holder_delta * holder_delta) - bias
+         
+    probability = 1 / (1 + np.exp(-z))
+    return float(probability)
+
+
 def compute_insider_score(wallet_stats: dict,
                           first_trade_timestamp: int,
                           pair_created_at: int | None,
-                          is_coordinated: bool = False) -> float:
+                          is_coordinated: bool = False,
+                          buy_ratio_120s: float = 0.0,
+                          holder_delta: float = 0.0) -> float:
     """
-    Calculate probability (0.0 - 1.0) that a wallet is an insider.
-    Heuristics refined for Phase 2 Cleanup.
+    Calculate probability (0.0 - 1.0) that a wallet/token has insider activity.
+    Refined V4.0: Uses Sigmoid-based P_insider.
     """
-    score = 0.0
-
-    # 1. Early Entry Bonus (Launches are volatile)
+    # 1. Base Early Score (0-1)
+    early_score = 0.0
     if pair_created_at:
         created_sec = pair_created_at / 1000 if pair_created_at > 1e11 else pair_created_at
         trade_sec = first_trade_timestamp
         seconds_since_launch = trade_sec - created_sec
         
-        if 0 <= seconds_since_launch <= 60:    # < 1 min (Extreme Early)
-            score += 0.5
-        elif 60 < seconds_since_launch <= 300: # 1-5 min
-            score += 0.3
+        if 0 <= seconds_since_launch <= 60:
+            early_score = 1.0
+        elif 60 < seconds_since_launch <= 300:
+            early_score = 0.6
+        elif seconds_since_launch <= 600:
+            early_score = 0.3
 
-    # 2. Fresh Wallet / No History
-    if wallet_stats.get("total_trades", 0) < 3:
-        score += 0.4
-    
-    # 3. Coordination Bonus (Phase 2 Cleanup)
+    # 2. Funding Overlap (Placeholder: 0.0 for now, requires deep on-chain trace)
+    funding_overlap = 0.0
     if is_coordinated:
-        logger.debug(f"Insider Score: Coordination bonus applied (+0.3)")
-        score += 0.3
+        funding_overlap = 0.5 # Coordination is a strong proxy for shared funding
 
-    # 4. Success Proxy
-    if wallet_stats.get("win_rate", 0) > 0.7 and wallet_stats.get("total_trades", 0) > 5:
-        score += 0.2
+    # 3. Compute P_insider
+    p_insider = compute_p_insider(
+        early_score=early_score,
+        funding_overlap=funding_overlap,
+        buy_ratio_120s=buy_ratio_120s,
+        holder_delta=holder_delta
+    )
 
-    return min(1.0, score)
+    return p_insider

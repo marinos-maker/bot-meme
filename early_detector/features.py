@@ -133,10 +133,21 @@ def compute_dip_recovery(price_series: np.ndarray) -> float:
     return (current - low) / range_
 
 
+def volume_intensity(vol_5m: float, liquidity: float) -> float:
+    """
+    Volume Intensity (Turnover Velocity).
+    VI = Volume_5m / (Liquidity + 1)
+    
+    High VI = High capital rotation relative to liquidity -> Explosive potential.
+    """
+    return vol_5m / (liquidity + 1.0)
+
+
 def compute_all_features(h_t: int, h_t10: int, h_t20: int,
                          unique_buyers: int, sells_20m: int, buys_20m: int,
                          price_series_20m: np.ndarray, price_series_5m: np.ndarray,
                          sells_5m: int, buys_5m: int,
+                         vol_5m: float, liquidity: float,
                          liquidity_series: np.ndarray,
                          buyers_volumes: list[float],
                          swr: float) -> dict:
@@ -154,5 +165,6 @@ def compute_all_features(h_t: int, h_t10: int, h_t20: int,
         "accel_liq": compute_liquidity_acceleration(liquidity_series),
         "vol_hhi": compute_volume_hhi(buyers_dicts),
         "dip_recovery": compute_dip_recovery(price_series_5m),
+        "vol_intensity": volume_intensity(vol_5m, liquidity),
         "swr": swr,
     }
