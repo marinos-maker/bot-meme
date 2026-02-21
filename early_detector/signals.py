@@ -91,15 +91,15 @@ def passes_safety_filters(token: dict) -> bool:
         logger.info(f"Safety: Freeze Authority ENABLED ({freeze_auth[:8]}...) — REJECTED")
         return False
 
-    # 2. Supply Concentration
-    top10_ratio = (token.get("top10_ratio") or 0.0)
-    from early_detector.config import TOP10_MAX_RATIO
-    if top10_ratio > (TOP10_MAX_RATIO * 100): # config is likely 0.35, metrics might be 0-100 or 0-1
-        # Let's check collector.py to see how top10_ratio is stored
-        # After check, it's (top_sum / supply) * 100.0
-        if top10_ratio > 35.0: # 35%
-            logger.info(f"Safety: Top 10 concentration too high ({top10_ratio:.1f}%) — REJECTED")
-            return False
+    # 2. Supply Concentration (Fail-Closed V4.6)
+    top10_ratio = token.get("top10_ratio")
+    if top10_ratio is None or top10_ratio == 0:
+        logger.info(f"Safety: Top 10 concentration UNKNOWN — REJECTED for prudence")
+        return False
+        
+    if top10_ratio > 35.0: # 35%
+        logger.info(f"Safety: Top 10 concentration too high ({top10_ratio:.1f}%) — REJECTED")
+        return False
 
     # 3. Behavioral Risk
     insider_psi = (token.get("insider_psi") or 0.0)

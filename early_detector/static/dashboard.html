@@ -460,28 +460,26 @@
             background: rgba(0, 0, 0, 0.2);
         }
 
-        /* Column Widths */
+        /* Column Widths (Mixed tables) */
         th:nth-child(1),
         td:nth-child(1) {
             width: 140px;
         }
 
-        /* Token */
         th:nth-child(2),
         td:nth-child(2) {
             width: 100px;
         }
 
-        /* Narrative */
         th:nth-child(3),
         td:nth-child(3) {
-            width: 100px;
+            width: 110px;
+            /* Wider for dual price (USD/SOL) */
         }
 
-        /* Price */
         th:nth-child(4),
         td:nth-child(4) {
-            width: 90px;
+            width: 110px;
         }
 
         /* MCAP */
@@ -1217,7 +1215,7 @@
                 <div class="kpi-card">
                     <div class="kpi-label">Smart Wallets</div>
                     <div class="kpi-value" id="kpiSmart">—</div>
-                    <div class="kpi-sub">ROI &gt; 2.5x, WR &gt; 40%</div>
+                    <div class="kpi-sub">ROI &gt; 1.2x, WR &gt; 30%</div>
                 </div>
                 <div class="kpi-card">
                     <div class="kpi-label">Signals Generated</div>
@@ -1256,6 +1254,7 @@
                                 <th>Liquidity</th>
                                 <th>Market Cap</th>
                                 <th>Insider</th>
+                                <th>Top 10</th>
                                 <th>Win P</th>
                                 <th>Size</th>
                                 <th>Time</th>
@@ -1340,6 +1339,7 @@
                                 <th>Market Cap</th>
                                 <th>Liquidity</th>
                                 <th>Holders</th>
+                                <th>Top 10</th>
                                 <th>Vol 5m</th>
                                 <th>B/S 5m</th>
                                 <th>II Score</th>
@@ -1524,7 +1524,8 @@
         // ── State ──────────────────────────────────────────────────────────────────
         let autoRefresh = true;
         let refreshInterval = null;
-        let activeTab = 'overview'; // Keep track of the active tab
+        let activeTab = 'overview';
+        let solPriceUsd = 0;
 
         // ── Tab Navigation ─────────────────────────────────────────────────────────
         function switchTab(tabName) {
@@ -1656,10 +1657,16 @@
                         </div>
                     </td>
                     <td><span class="score-badge ${getScoreClass(s.instability_index)}">${s.instability_index.toFixed(3)}</span></td>
-                    <td class="mono">$${formatNum(s.entry_price)}</td>
+                    <td class="mono">
+                        <div>$${formatNum(s.entry_price)}</div>
+                        <div style="font-size:10px; color:var(--text-muted)">
+                            ${solPriceUsd > 0 ? (s.entry_price / solPriceUsd).toFixed(9) + ' SOL' : '—'}
+                        </div>
+                    </td>
                     <td class="mono">$${formatNum(s.liquidity)}</td>
                     <td class="mono">$${formatNum(s.marketcap)}</td>
                     <td class="mono" style="color:${s.insider_psi > 0.5 ? 'var(--red)' : 'var(--text-secondary)'}">${(s.insider_psi).toFixed(2)}</td>
+                    <td class="mono" style="color:var(--accent)">${(s.top10_ratio || 0).toFixed(1)}%</td>
                     <td class="mono" style="color:var(--green)">${(s.confidence * 100).toFixed(0)}%</td>
                     <td class="mono" style="color:var(--accent)">${(s.kelly_size * 100).toFixed(1)}%</td>
                     <td class="last-update">${formatTime(s.timestamp)}</td>
@@ -1723,10 +1730,16 @@
                     <td>
                         <span class="narrative-tag narrative-${t.narrative.toLowerCase()}">${t.narrative}</span>
                     </td>
-                    <td class="mono">$${formatNum(t.price)}</td>
+                    <td class="mono">
+                        <div>$${formatNum(t.price)}</div>
+                        <div style="font-size:10px; color:var(--text-muted)">
+                            ${solPriceUsd > 0 ? (t.price / solPriceUsd).toFixed(9) + ' SOL' : '—'}
+                        </div>
+                    </td>
                     <td class="mono">$${formatNum(t.marketcap)}</td>
                     <td class="mono">$${formatNum(t.liquidity)}</td>
                     <td class="mono">${t.holders ? t.holders.toLocaleString() : '0'}</td>
+                    <td class="mono" style="color:var(--accent)">${(t.top10_ratio || 0).toFixed(1)}%</td>
                     <td class="mono">$${formatNum(t.volume_5m)}</td>
                     <td>
                         <span class="positive">${t.buys_5m}</span> /
@@ -2023,8 +2036,18 @@
                         return `<tr>
                             <td><div class="token-info"><span class="token-name">${p.symbol}</span><span class="token-address">${p.token_address.slice(0, 6)}…</span></div></td>
                             <td class="mono">${p.amount_sol.toFixed(3)} SOL</td>
-                            <td class="mono">$${formatNum(p.price_entry)}</td>
-                            <td class="mono">$${formatNum(p.current_price)}</td>
+                            <td class="mono">
+                                <div>$${formatNum(p.price_entry)}</div>
+                                <div style="font-size:10px; color:var(--text-muted)">
+                                    ${solPriceUsd > 0 ? (p.price_entry / solPriceUsd).toFixed(9) : '—'}
+                                </div>
+                            </td>
+                            <td class="mono">
+                                <div>$${formatNum(p.current_price)}</div>
+                                <div style="font-size:10px; color:var(--text-muted)">
+                                    ${solPriceUsd > 0 ? (p.current_price / solPriceUsd).toFixed(9) : '—'}
+                                </div>
+                            </td>
                             <td class="mono" style="color:${roiColor};font-weight:700">${p.roi_pct >= 0 ? '+' : ''}${p.roi_pct.toFixed(1)}%</td>
                             <td class="mono" style="color:var(--green)">+${p.tp_pct}%</td>
                             <td class="mono" style="color:var(--red)">-${p.sl_pct}%</td>
@@ -2047,8 +2070,18 @@
                         return `<tr>
                             <td>${t.symbol}</td>
                             <td class="mono">${t.amount_sol.toFixed(3)} SOL</td>
-                            <td class="mono">$${formatNum(t.price_entry)}</td>
-                            <td class="mono">$${formatNum(t.price_exit)}</td>
+                            <td class="mono">
+                                <div>$${formatNum(t.price_entry)}</div>
+                                <div style="font-size:10px; color:var(--text-muted)">
+                                    ${solPriceUsd > 0 ? (t.price_entry / solPriceUsd).toFixed(9) : '—'}
+                                </div>
+                            </td>
+                            <td class="mono">
+                                <div>$${formatNum(t.price_exit)}</div>
+                                <div style="font-size:10px; color:var(--text-muted)">
+                                    ${solPriceUsd > 0 ? (t.price_exit / solPriceUsd).toFixed(9) : '—'}
+                                </div>
+                            </td>
                             <td class="mono" style="color:${roiColor};font-weight:700">${t.roi_pct >= 0 ? '+' : ''}${t.roi_pct.toFixed(1)}%</td>
                             <td>${statusIcon} ${t.status}</td>
                             <td class="last-update">${formatTime(t.closed_at)}</td>
@@ -2071,7 +2104,9 @@
         async function loadSolPrice() {
             const data = await fetchAPI('/api/trade/sol-price');
             if (data && data.price) {
-                document.getElementById('solPriceText').textContent = `$${data.price.toFixed(2)}`;
+                solPriceUsd = data.price;
+                const el = document.getElementById('solPriceText');
+                if (el) el.textContent = `$${data.price.toFixed(2)}`;
             }
         }
 

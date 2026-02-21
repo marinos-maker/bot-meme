@@ -1,0 +1,13 @@
+                     Table "public.wallet_performance"
+    Column     |           Type           | Collation | Nullable | Default 
+---------------+--------------------------+-----------+----------+---------
+ wallet        | text                     |           | not null | 
+ avg_roi       | numeric                  |           |          | 
+ total_trades  | integer                  |           |          | 
+ win_rate      | numeric                  |           |          | 
+ cluster_label | text                     |           |          | 
+ last_active   | timestamp with time zone |           |          | 
+Indexes:
+    "wallet_performance_pkey" PRIMARY KEY, btree (wallet)
+Policies (row security enabled): (none)
+

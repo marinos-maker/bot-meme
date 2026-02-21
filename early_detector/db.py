@@ -208,22 +208,47 @@ async def has_recent_signal(token_id: str, minutes: int = 60) -> bool:
 # ── Wallet helpers ────────────────────────────────────────────────────────────
 
 async def upsert_wallet(wallet: str, stats: dict) -> None:
-    """Insert or update wallet performance stats."""
+    """Insert or update wallet performance stats cumulatively."""
     pool = await get_pool()
-    await pool.execute(
-        """
-        INSERT INTO wallet_performance (wallet, avg_roi, total_trades, win_rate, cluster_label, last_active)
-        VALUES ($1, $2, $3, $4, $5, NOW())
-        ON CONFLICT (wallet) DO UPDATE
+    # Check if wallet exists to calculate cumulative stats
+    row = await pool.fetchrow("SELECT total_trades, avg_roi, win_rate FROM wallet_performance WHERE wallet = $1", wallet)
+    
+    new_trades = stats.get("total_trades", 0)
+    new_roi = stats.get("avg_roi", 1.0)
+    new_wr = stats.get("win_rate", 0.0)
+    cluster = stats.get("cluster_label", "unknown")
+
+    if row:
+        old_trades = row["total_trades"] or 0
+        old_roi = float(row["avg_roi"] or 1.0)
+        old_wr = float(row["win_rate"] or 0.0)
+        
+        total_trades = old_trades + new_trades
+        if total_trades > 0:
+            # Weighted average
+            updated_roi = (old_roi * old_trades + new_roi * new_trades) / total_trades
+            updated_wr = (old_wr * old_trades + new_wr * new_trades) / total_trades
+        else:
+            updated_roi = new_roi
+            updated_wr = new_wr
+            
+        await pool.execute(
+            """
+            UPDATE wallet_performance 
             SET avg_roi = $2, total_trades = $3, win_rate = $4,
                 cluster_label = $5, last_active = NOW()
-        """,
-        wallet,
-        stats.get("avg_roi"),
-        stats.get("total_trades"),
-        stats.get("win_rate"),
-        stats.get("cluster_label"),
-    )
+            WHERE wallet = $1
+            """,
+            wallet, updated_roi, total_trades, updated_wr, cluster
+        )
+    else:
+        await pool.execute(
+            """
+            INSERT INTO wallet_performance (wallet, avg_roi, total_trades, win_rate, cluster_label, last_active)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+            """,
+            wallet, new_roi, new_trades, new_wr, cluster
+        )
 
 
 async def touch_wallet(wallet: str) -> None:

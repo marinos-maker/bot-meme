@@ -29,6 +29,11 @@ from early_detector.trader import execute_buy, execute_sell, get_sol_balance, ge
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Setup logging to file if not already done by main.py (it's a separate process)
+    from early_detector.config import LOG_FILE, LOG_ROTATION, LOG_LEVEL
+    logger.add(LOG_FILE, rotation=LOG_ROTATION, level=LOG_LEVEL,
+               format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
+    
     await get_pool()
     logger.info("=" * 60)
     logger.info("🚀 Solana Early Detector DASHBOARD V4.0.3 (Alpha Engine)")
@@ -63,7 +68,8 @@ async def api_overview():
     from early_detector.config import SW_MIN_ROI, SW_MIN_TRADES, SW_MIN_WIN_RATE
     smart_count = await pool.fetchval(
         "SELECT COUNT(*) FROM wallet_performance "
-        "WHERE avg_roi > $1 AND total_trades >= $2 AND win_rate > $3",
+        "WHERE (avg_roi > $1 AND total_trades >= $2 AND win_rate > $3) "
+        "OR (avg_roi > 10.0 AND total_trades >= 3)",
         SW_MIN_ROI, SW_MIN_TRADES, SW_MIN_WIN_RATE
     )
 

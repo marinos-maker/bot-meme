@@ -1,0 +1,12 @@
+                  List of relations
+ Schema |           Name           | Type  |  Owner   
+--------+--------------------------+-------+----------
+ public | creator_performance      | table | postgres
+ public | market_regime            | table | postgres
+ public | signals                  | table | postgres
+ public | token_metrics_timeseries | table | postgres
+ public | tokens                   | table | postgres
+ public | trades                   | table | postgres
+ public | wallet_performance       | table | postgres
+(7 rows)
+
