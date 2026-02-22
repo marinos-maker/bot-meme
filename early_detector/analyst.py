@@ -23,9 +23,15 @@ if not HAS_NEW_GENAI and GOOGLE_API_KEY:
     except Exception as e:
         logger.warning(f"Failed to configure old genai: {e}")
 
+# In-memory cache to avoid duplicate expensive AI calls
+# { address: (timestamp, result_dict) }
+AI_CACHE = {}
+CACHE_TTL = 600 # 10 minutes
+
 async def analyze_token_signal(token_data: dict, history: list) -> dict:
     """
     Asks Gemini to analyze a token based on current metrics and history.
+    Includes caching to preserve quota.
     """
     if not GOOGLE_API_KEY:
         return {
@@ -35,11 +41,20 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
             "risks": []
         }
 
+    address = token_data.get('address') or 'Unknown'
+    
+    # ── Check Cache ──
+    now = datetime.now().timestamp()
+    if address in AI_CACHE:
+        ts, cached_result = AI_CACHE[address]
+        if now - ts < CACHE_TTL:
+            logger.info(f"🧠 AI: Using cached result for {address[:8]}...")
+            return cached_result
+
     try:
         # 1. Prepare data for prompt with defaults for None values
         current = token_data
         symbol = current.get('symbol') or '???'
-        address = current.get('address') or 'Unknown'
         price = current.get('price') or 0.0
         mcap = current.get('marketcap') or 0.0
         liq = current.get('liquidity') or 0.0
@@ -64,40 +79,45 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
 
         # 2. Build Prompt
         prompt = f"""
-        Analyze this Solana Meme Coin signal. Be critical, concise, and act like a professional degen trader.
-        RESPONSE MUST BE IN ENGLISH.
-        
-        TOKEN DATA:
+        Act as a professional Crypto Alpha Analyst and Degen Trader. 
+        Analyze this Solana Meme Coin signal with extreme prejudice. 
+        Detect potential rug-pulls, wash-trading, and coordinated degen entries.
+
+        TOKEN METRICS:
         - Symbol: {symbol}
         - Address: {address}
         - Price: ${price:.12f}
         - Market Cap: ${mcap:,.0f}
         - Liquidity: ${liq:,.0f}
-        - Holders: {holders} (Growth: {h_growth:+.2f}% since last cycle)
-        - Top 10 Holders Ratio: {top10:.1f}%
+        - Liquidity/MCap Ratio: {liq / (mcap + 1e-9):.3f}
+        - Holders: {holders} (20m Growth: {h_growth:+.1f}%)
+        - Top 10 Holder Concentration: {top10:.1f}%
         - 5m Volume: ${vol_5m:,.0f}
-        - 5m Buys/Sells: {buys_5m}/{sells_5m}
-        - Instability Index: {instability:.3f}
-        - Insider Risk (PSI): {insider_psi:.2f}
-        - Creator Risk: {creator_risk:.2f}
-        - Mint Authority: {"ENABLED (RUG RISK!)" if mint_auth else "Revoked (Safe)"}
-        - Freeze Authority: {"ENABLED (SCAM RISK!)" if freeze_auth else "Revoked (Safe)"}
+        - 5m Buy/Sell Ratio: {buys_5m/(sells_5m+1):.2f} ({buys_5m} buys / {sells_5m} sells)
+        - Instability Index (II): {instability:.3f}
+        - Insider Probability (PSI): {insider_psi:.2f}
+        - Creator Reputation Risk: {creator_risk:.2f}
+        - Authorities: Mint: {"⚠️ ENABLED" if mint_auth else "✅ Revoked"}, Freeze: {"⚠️ ENABLED" if freeze_auth else "✅ Revoked"}
         - Narrative: {narrative}
         
-        LIQUIDITY/MCAP RATIO: {liq / (mcap + 1e-9):.2f}
+        CRITICAL RULES:
+        1. If Mint or Freeze is ENABLED, Verdict MUST be AVOID.
+        2. If Top 10 > 50%, be extremely critical.
+        3. If Insider PSI > 0.7, assume it's a cabal/scam.
         
-        CRITICAL: If Mint Authority or Freeze Authority is ENABLED, the verdict MUST be AVOID.
-        If Top 10 Holders Ratio > 40%, be extremely cautious.
-        Based on these metrics, give a structured verdict.
-        High Insider Risk (>0.7) or high Creator Risk (>0.7) must be a strong red flag.
-        Return ONLY a JSON object with this exact structure (no markdown formatting, no backticks, just raw JSON).
-        The "summary" and "risks" fields MUST be in ENGLISH:
+        Return ONLY a JSON object (no markdown, no backticks):
         {{
             "verdict": "BUY" | "WAIT" | "AVOID",
+            "degen_score": (int 0-100),
             "rating": (int 0-10),
-            "risk_level": "HIGH" | "MEDIUM" | "LOW",
-            "summary": "Concise explanation of the verdict IN ENGLISH (max 200 chars)",
-            "risks": ["Risk factor 1", "Risk factor 2", "Risk factor 3"]
+            "risk_level": "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
+            "summary": "One sentence punchy degen summary IN ENGLISH",
+            "analysis": {{
+                "bull_case": "Why this could 10x",
+                "bear_case": "Why this will rug/dump",
+                "narrative_strength": (int 0-10)
+            }},
+            "risks": ["Risk 1", "Risk 2", "Risk 3"]
         }}
         """
 
@@ -107,9 +127,9 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         # Use available models (Gemini 2.0 Flash is preferred, 1.5 as fallback)
         models_to_try = [
             'gemini-2.0-flash', 
+            'gemini-2.0-flash-lite-preview-02-05',
             'gemini-1.5-flash', 
-            'gemini-1.5-flash-8b', 
-            'gemini-flash-latest'
+            'gemini-1.5-pro'
         ]
         
         if HAS_NEW_GENAI:
@@ -126,10 +146,11 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
                 except Exception as e:
                     err_msg = str(e).upper()
                     if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                        logger.warning(f"Gemini 429 on {model_name}, quota reached.")
-                        # If the first model (usually fastest) is exhausted, wait a tiny bit
+                        logger.warning(f"Gemini 429 on {model_name}, quota reached. Waiting 2s...")
                         import asyncio
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(2)
+                    elif "404" in err_msg or "NOT_FOUND" in err_msg:
+                        logger.warning(f"Model {model_name} not found, skipping...")
                     else:
                         logger.warning(f"Failed with {model_name} (new genai): {e}")
                     continue
@@ -137,7 +158,7 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
             # Fallback to old library
             for model_name in models_to_try:
                 try:
-                    model = genai_old.GenerativeModel(model_name)
+                    model = genai_old.GenerativeModel(model_name or 'gemini-1.5-flash')
                     response = model.generate_content(prompt)
                     if response and response.text:
                         response_text = response.text
@@ -149,6 +170,7 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         if not response_text:
             return {
                 "verdict": "WAIT",
+                "degen_score": 0,
                 "rating": 0,
                 "risk_level": "UNKNOWN",
                 "summary": "AI is temporarily overloaded or credits exhausted. Try again in 1 minute.",
@@ -157,10 +179,7 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         
         # 4. Parse JSON from response text (Robust)
         text = response_text.strip()
-        
-        # Strip markdown code blocks if present
         if "```" in text:
-            # find first { and last }
             start = text.find("{")
             end = text.rfind("}")
             if start != -1 and end != -1:
@@ -169,7 +188,6 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         try:
             result = json.loads(text)
         except json.JSONDecodeError:
-            # Last ditch effort: regex for json object
             import re
             match = re.search(r'\{.*\}', text, re.DOTALL)
             if match:
@@ -177,22 +195,34 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
             else:
                 raise ValueError(f"Could not parse JSON from AI response: {text[:50]}...")
                 
+        # ── Normalize Output (V4.5) ──
+        # Ensure degen_score exists, or derive it from rating
+        rating = result.get("rating", 0)
+        if "degen_score" not in result:
+            result["degen_score"] = int(rating * 10)
+        
+        # Ensure other critical fields exist
+        if "verdict" not in result: result["verdict"] = "WAIT"
+        if "summary" not in result: result["summary"] = "No summary provided by AI."
+        if "risks" not in result: result["risks"] = []
+
+        # ── Update Cache ──
+        AI_CACHE[address] = (datetime.now().timestamp(), result)
+
         return result
 
     except Exception as e:
         error_msg = str(e)
-        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            return {
-                "rating": 0,
-                "verdict": "WAIT",
-                "summary": "AI Quota Exceeded. Please wait 60 seconds and try again.",
-                "risks": ["Rate Limit Reached"]
-            }
-        
         logger.error(f"AI Analyst error: {e}")
+        
+        # Determine if it's a rate limit error
+        is_quota = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg
+        
         return {
+            "verdict": "WAIT" if is_quota else "ERROR",
+            "degen_score": 0,
             "rating": 0,
-            "verdict": "ERROR",
-            "summary": "Could not generate AI analysis at this time.",
-            "risks": ["Internal Error", error_msg[:100]]
+            "risk_level": "CRITICAL" if not is_quota else "MEDIUM",
+            "summary": "AI Quota Exceeded. Please wait 60s." if is_quota else f"Error: {error_msg[:50]}",
+            "risks": ["Rate Limit Reached" if is_quota else "Internal Analysis Error"]
         }

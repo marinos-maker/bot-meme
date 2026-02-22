@@ -65,19 +65,36 @@ def cluster_wallets(stats_df: pd.DataFrame, n_clusters: int = 3) -> pd.DataFrame
         stats_df["cluster_label"] = "unknown"
         return stats_df
 
-    features = stats_df[["avg_roi", "total_trades", "win_rate"]].fillna(0).values
+    # V4.5: Use Log-Scaling for features to handle extreme ROI outliers (e.g., 1000x hits)
+    # This prevents a single massive winner from taking over the entire 'Insider' cluster.
+    df = stats_df[["avg_roi", "total_trades", "win_rate"]].fillna(0).copy()
+    
+    # Clip and Log-transform ROI (min 0.1 to avoid log(0))
+    df["avg_roi"] = np.log1p(df["avg_roi"].clip(lower=0))
+    # total_trades also benefits from log scaling as some bots have 10k+ trades
+    df["total_trades"] = np.log1p(df["total_trades"])
+    # win_rate is 0-1, so we just scale it up a bit to weigh it similarly
+    df["win_rate"] = df["win_rate"] * 2.0 
+    
+    features = df.values
 
     kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
     labels = kmeans.fit_predict(features)
 
-    # Assign human-readable labels based on avg_roi centroid
+    # Assign human-readable labels based on SHAPE of clusters
+    # Insider: High ROI, High WinRate
+    # Sniper: High Trades, Moderate ROI
+    # Retail: Low ROI, Low WinRate
+    
     centroids = kmeans.cluster_centers_
-    roi_order = np.argsort(centroids[:, 0])  # sort by avg_roi ascending
+    # Sort clusters by a 'Score' = log(ROI) * WinRate
+    scores = centroids[:, 0] * centroids[:, 2] 
+    order = np.argsort(scores) 
 
     label_map = {
-        int(roi_order[0]): "retail",
-        int(roi_order[1]): "sniper",
-        int(roi_order[2]): "insider",
+        int(order[0]): "retail",
+        int(order[1]): "sniper",
+        int(order[2]): "insider",
     }
 
     stats_df = stats_df.copy()

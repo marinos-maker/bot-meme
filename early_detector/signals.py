@@ -56,8 +56,14 @@ def passes_trigger(token: dict, threshold: float) -> bool:
     # V4.2 Exception: Allow low reported liquidity if II is high AND MCAP is reasonable
     # (Matches new Pump tokens where DexScreener reports 0 liq temporarily)
     if liq < LIQUIDITY_MIN:
-        # Relaxed exception: allow low liquidity if II is very high and it's a new small cap
-        if ii > (threshold * 2.0) and mcap < 150000:
+        # CRITICAL V4.6: If liquidity is literally 0 or negative, REJECT immediately.
+        # $0 liquidity tokens are untradable or already rugged.
+        if liq <= 0:
+            logger.info(f"Trigger rejected: ZERO Liquidity for {token.get('symbol') or token.get('address')}")
+            return False
+
+        # Relaxed exception: allow low liquidity (but > $100) if II is very high and it's a new small cap
+        if ii > (threshold * 2.0) and mcap < 150000 and liq >= 100:
             logger.info(f"Trigger exception: High II ({ii:.3f}) for new low-liquidity token {token.get('symbol') or token.get('address')} (Liq: {liq:.0f})")
         else:
             logger.info(f"Trigger rejected: Low Liquidity ({liq:.0f} < {LIQUIDITY_MIN}) for {token.get('symbol') or token.get('address')}")
@@ -91,13 +97,18 @@ def passes_safety_filters(token: dict) -> bool:
         logger.info(f"Safety: Freeze Authority ENABLED ({freeze_auth[:8]}...) — REJECTED")
         return False
 
-    # 2. Supply Concentration (Fail-Closed V4.6)
+    # 2. Supply Concentration (Fail-Closed V4.6 - with Early Grace)
     top10_ratio = token.get("top10_ratio")
+    mcap = token.get("marketcap") or 0
+    
     if top10_ratio is None or top10_ratio == 0:
-        logger.info(f"Safety: Top 10 concentration UNKNOWN — REJECTED for prudence")
-        return False
-        
-    if top10_ratio > 35.0: # 35%
+        if mcap > 100000: # Only reject if it's already a larger cap and we STILL don't know holders
+            logger.info(f"Safety: Top 10 concentration UNKNOWN for large cap ({mcap:,.0f}) — REJECTED")
+            return False
+        else:
+            logger.info(f"Safety Grace: Top 10 concentration UNKNOWN for early cap ({mcap:,.0f}) — PROCEEDING")
+            # We don't return True yet, continue to other filters
+    elif top10_ratio > 45.0: # Increased from 35% to 45% as many legit meme coins are concentrated early
         logger.info(f"Safety: Top 10 concentration too high ({top10_ratio:.1f}%) — REJECTED")
         return False
 
@@ -122,6 +133,45 @@ def passes_safety_filters(token: dict) -> bool:
     return True
 
 
+def passes_quality_gate(token_data: dict, ai_result: dict) -> bool:
+    """
+    Final Quality Check (V4.6 Quality & Stability):
+    - Higher bar for entry to avoid 'noise' signals.
+    """
+    # 1. Lowered Liquidity Floor for Early Detection (V4.7)
+    liq = token_data.get("liquidity") or 0
+    if liq < 300:
+        logger.info(f"Quality Gate: REJECTED {token_data.get('symbol')} - Liquidity too low (${liq:.0f})")
+        return False
+
+    # 2. Age Filter (Avoid instant launches without high AI validation)
+    # pair_created_at is in ms from DexScreener
+    created_at = token_data.get("pair_created_at")
+    import time
+    if created_at:
+        now_ms = time.time() * 1000
+        age_min = (now_ms - created_at) / (1000 * 60)
+        
+        # If less than 15 minutes old, require DECENT Ai degen score
+        if age_min < 15:
+            degen_score = ai_result.get("degen_score") or 0
+            if degen_score < 65:
+                logger.info(f"Quality Gate: REJECTED {token_data.get('symbol')} - Too new ({age_min:.1f}m) and low AI score ({degen_score})")
+                return False
+                
+    # 3. High Confidence Requirement for "Quiet" tokens
+    # If no Smart Wallets and low Insider Probability, we need high bayesian confidence
+    swr = token_data.get("swr") or 0
+    psi = token_data.get("insider_psi") or 0
+    if swr == 0 and psi < 0.2:
+        conf = token_data.get("confidence") or 0
+        if conf < 0.45:
+            logger.info(f"Quality Gate: REJECTED {token_data.get('symbol')} - Low conviction signal (Conf: {conf:.2f}, No Smart Wallets)")
+            return False
+
+    return True
+
+
 async def process_signals(scored_df, threshold: float, regime_label: str = "UNKNOWN") -> list[dict]:
     """
     Evaluate all scored tokens and generate signals for qualifying ones.
@@ -129,6 +179,7 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
     """
     signals = []
 
+    logger.info(f"📊 Evaluating {len(scored_df)} tokens against threshold {threshold:.4f}...")
     for _, row in scored_df.iterrows():
         token_data = row.to_dict()
 
@@ -136,6 +187,7 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
             continue
 
         if not passes_safety_filters(token_data):
+            logger.info(f"🛡️ {token_data.get('symbol')} failed safety filters")
             continue
 
         token_id = str(token_data.get("token_id"))
@@ -215,6 +267,7 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
             "mint_authority": token_data.get("mint_authority"),
             "freeze_authority": token_data.get("freeze_authority"),
             "top10_ratio": token_data.get("top10_ratio", 0.0),
+            "pair_created_at": token_data.get("pair_created_at"),
         }
 
         # ── Exit Strategy (V4.0) ──
@@ -226,6 +279,15 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
         # ── Quantitative Diary (V4.0) ──
         from early_detector.diary import log_trade_signal
         log_trade_signal(signal, regime_label)
+
+        # AI Analyst disabled by USER request
+        signal["degen_score"] = None
+        signal["ai_summary"] = "AI Analyst disabled"
+        signal["ai_analysis"] = None
+        
+        # V4.6 Stability Quality Gate - modified to use empty ai_result
+        if not passes_quality_gate(signal, {}):
+             continue
 
         # Save to DB
         await insert_signal(
@@ -239,7 +301,10 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
             insider_psi=signal["insider_psi"],
             creator_risk=signal["creator_risk"],
             hard_stop=signal["hard_stop"],
-            tp_1=signal["tp_1"]
+            tp_1=signal["tp_1"],
+            degen_score=signal.get("degen_score"),
+            ai_summary=signal.get("ai_summary"),
+            ai_analysis=signal.get("ai_analysis")
         )
 
         # Send notification

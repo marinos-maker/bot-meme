@@ -174,20 +174,26 @@ async def insert_signal(token_id: str, instability_index: float,
                         kelly_size: float = 0.0, insider_psi: float = 0.0,
                         creator_risk: float = 0.0,
                         hard_stop: float | None = None,
-                        tp_1: float | None = None) -> None:
+                        tp_1: float | None = None,
+                        degen_score: int | None = None,
+                        ai_summary: str | None = None,
+                        ai_analysis: dict | None = None) -> None:
     """Record a generated signal."""
+    import json
     pool = await get_pool()
     await pool.execute(
         """
         INSERT INTO signals (token_id, instability_index, entry_price, 
                             liquidity, marketcap, confidence, kelly_size, 
-                            insider_psi, creator_risk, hard_stop, tp_1)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                            insider_psi, creator_risk, hard_stop, tp_1,
+                            degen_score, ai_summary, ai_analysis)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         """,
         token_id, instability_index, entry_price, liquidity, marketcap, 
-        confidence, kelly_size, insider_psi, creator_risk, hard_stop, tp_1
+        confidence, kelly_size, insider_psi, creator_risk, hard_stop, tp_1,
+        degen_score, ai_summary, json.dumps(ai_analysis) if ai_analysis else None
     )
-    logger.info(f"Signal saved for token {token_id} — II={instability_index:.3f}, PSI={insider_psi:.2f}")
+    logger.info(f"Signal saved for token {token_id} — II={instability_index:.3f}, Degen={degen_score}")
 
 
 async def has_recent_signal(token_id: str, minutes: int = 60) -> bool:
@@ -258,6 +264,13 @@ async def touch_wallet(wallet: str) -> None:
         "UPDATE wallet_performance SET last_active = NOW() WHERE wallet = $1",
         wallet
     )
+
+async def get_all_wallet_performance() -> list[dict]:
+    """Retrieve all wallet performance rows for global re-clustering."""
+    pool = await get_pool()
+    rows = await pool.fetch("SELECT wallet, avg_roi, total_trades, win_rate FROM wallet_performance")
+    return [dict(r) for r in rows]
+
 
 async def get_smart_wallets() -> list[str]:
     """Return list of wallet addresses classified as 'smart'."""
@@ -444,13 +457,20 @@ async def cleanup_old_data(days: int = 7) -> int:
             str(days)
         )
         
-        # 2. Clean orphaned tokens 
+        # 2. Clean signals
+        await pool.execute(
+            "DELETE FROM signals WHERE timestamp < NOW() - ($1 || ' days')::INTERVAL",
+            str(days)
+        )
+        
+        # 3. Clean orphaned tokens 
         # (Tokens with no metrics and not linked to any trade)
         res = await pool.execute(
             """
             DELETE FROM tokens 
             WHERE id NOT IN (SELECT DISTINCT token_id FROM token_metrics_timeseries)
             AND id NOT IN (SELECT DISTINCT token_id FROM trades)
+            AND id NOT IN (SELECT DISTINCT token_id FROM signals)
             """
         )
         

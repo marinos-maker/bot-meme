@@ -798,6 +798,27 @@
             background: rgba(99, 102, 241, 0.15);
         }
 
+        .verdict-tag {
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .v-BUY {
+            background: var(--green);
+            color: white;
+        }
+
+        .v-WAIT {
+            background: var(--yellow);
+            color: white;
+        }
+
+        .v-AVOID {
+            background: var(--red);
+            color: white;
+        }
+
         .row-buyable {
             background: rgba(16, 185, 129, 0.1) !important;
             box-shadow: inset 4px 0 0 var(--green);
@@ -980,14 +1001,27 @@
         }
 
         .heat-symbol {
-            font-weight: 700;
-            font-size: 14px;
-            margin-bottom: 4px;
+            font-weight: 800;
+            font-size: 15px;
+            margin-bottom: 2px;
+            color: white;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .heat-address {
+            font-size: 8px;
+            font-family: monospace;
+            opacity: 0.6;
+            margin-bottom: 6px;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 1px 4px;
+            border-radius: 3px;
         }
 
         .heat-val {
-            font-size: 11px;
-            opacity: 0.8;
+            font-size: 10px;
+            font-weight: 600;
+            opacity: 0.9;
         }
 
         /* Explosive List */
@@ -1199,8 +1233,34 @@
             <button class="tab" id="tab-analytics" onclick="switchTab('analytics')">📈 Analytics</button>
         </div>
 
+        <!-- SEARCH / FILTER FLOATING (Quick Navigation) -->
+        <div style="margin-bottom: 24px; display: flex; gap: 12px; align-items: center;">
+            <input type="text" id="tokenSearch" placeholder="🔍 Search address or symbol..." oninput="filterAllTables()"
+                style="flex:1; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 20px; color: var(--text-primary); outline: none;">
+            <div class="tabs" style="margin-bottom: 0;">
+                <button class="tab active filter-tab" id="btn-top-only" onclick="toggleTopOnly()">💎 Top Picks
+                    Only</button>
+                <button class="tab filter-tab" id="btn-show-all" onclick="toggleShowAll()">🌎 All Tokens</button>
+            </div>
+        </div>
+
         <!-- OVERVIEW SECTION -->
         <div class="section active" id="section-overview">
+
+            <!-- TOP PICKS GRID -->
+            <div id="topPicksContainer" style="margin-bottom: 32px; display: none;">
+                <h2
+                    style="font-size: 20px; font-weight: 800; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
+                    💎 <span
+                        style="background: var(--gradient-2); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">Top
+                        Opportunities</span>
+                </h2>
+                <div class="kpi-grid" id="topPicksGrid"
+                    style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+                    <!-- Top Picks cards injected here -->
+                </div>
+            </div>
+
             <div class="kpi-grid" id="kpiGrid">
                 <div class="kpi-card">
                     <div class="kpi-label">Tokens Tracked</div>
@@ -1215,7 +1275,7 @@
                 <div class="kpi-card">
                     <div class="kpi-label">Smart Wallets</div>
                     <div class="kpi-value" id="kpiSmart">—</div>
-                    <div class="kpi-sub">ROI &gt; 1.2x, WR &gt; 30%</div>
+                    <div class="kpi-sub">ROI > 1.1x, WR > 25%</div>
                 </div>
                 <div class="kpi-card">
                     <div class="kpi-label">Signals Generated</div>
@@ -1250,6 +1310,7 @@
                             <tr>
                                 <th>Token</th>
                                 <th>Instability</th>
+                                <th>AI Degen</th>
                                 <th>Price</th>
                                 <th>Liquidity</th>
                                 <th>Market Cap</th>
@@ -1258,7 +1319,6 @@
                                 <th>Win P</th>
                                 <th>Size</th>
                                 <th>Time</th>
-                                <th>AI Analyst</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
@@ -1335,6 +1395,7 @@
                             <tr>
                                 <th>Token</th>
                                 <th>Narrative</th>
+                                <th>AI Degen</th>
                                 <th>Price</th>
                                 <th>Market Cap</th>
                                 <th>Liquidity</th>
@@ -1343,7 +1404,6 @@
                                 <th>Vol 5m</th>
                                 <th>B/S 5m</th>
                                 <th>II Score</th>
-                                <th>AI Analyst</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
@@ -1415,6 +1475,21 @@
                     <div class="table-header" style="border:none; padding:0 0 16px 0;">
                         <div class="table-title">🔥 Market Instability Heatmap</div>
                         <div class="last-update" id="heatmapTime">Real-time</div>
+                    </div>
+                    <div class="heatmap-legend"
+                        style="display:flex; gap:16px; margin-bottom:16px; font-size:11px; color:var(--text-muted); padding:8px; background:rgba(255,255,255,0.02); border-radius:8px;">
+                        <div style="display:flex; align-items:center; gap:6px;"><span
+                                style="width:12px; height:12px; background:var(--green); border-radius:3px;"></span>
+                            Best (Stable)</div>
+                        <div style="display:flex; align-items:center; gap:6px;"><span
+                                style="width:12px; height:12px; background:rgba(99, 102, 241, 0.4); border-radius:3px;"></span>
+                            Normal</div>
+                        <div style="display:flex; align-items:center; gap:6px;"><span
+                                style="width:12px; height:12px; background:rgba(245, 158, 11, 0.6); border-radius:3px;"></span>
+                            Moderate</div>
+                        <div style="display:flex; align-items:center; gap:6px;"><span
+                                style="width:12px; height:12px; background:var(--red); border-radius:3px;"></span> High
+                            Instability</div>
                     </div>
                     <div class="heatmap-grid" id="heatmapGrid">
                         <!-- Heat cells injected here -->
@@ -1529,11 +1604,9 @@
 
         // ── Tab Navigation ─────────────────────────────────────────────────────────
         function switchTab(tabName) {
-            // Update buttons
-            document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
-            // Find button by onclick content is hard, so we just use the order or ID if present
-            // Simplified: select based on text content or assume simple match
-            const buttons = Array.from(document.querySelectorAll('.tab'));
+            // Update buttons (only main navigation tabs, not filters)
+            const buttons = Array.from(document.querySelectorAll('.tab:not(.filter-tab)'));
+            buttons.forEach(b => b.classList.remove('active'));
             const targetBtn = buttons.find(b => b.textContent.toLowerCase().includes(tabName));
             if (targetBtn) targetBtn.classList.add('active');
 
@@ -1567,7 +1640,51 @@
 
         function startAutoRefresh() {
             clearInterval(refreshInterval);
-            refreshInterval = setInterval(refreshAll, 5000);
+            refreshInterval = setInterval(refreshAll, 3000); // 3s for truly real-time vision
+        }
+
+        // Filtering state
+        let showTopOnly = true;
+
+        function toggleTopOnly() {
+            showTopOnly = true;
+            document.getElementById('btn-top-only').classList.add('active');
+            document.getElementById('btn-show-all').classList.remove('active');
+            refreshAll();
+        }
+
+        function toggleShowAll() {
+            showTopOnly = false;
+            document.getElementById('btn-show-all').classList.add('active');
+            document.getElementById('btn-top-only').classList.remove('active');
+            refreshAll();
+        }
+
+        function filterAllTables() {
+            const query = document.getElementById('tokenSearch').value.toLowerCase().trim();
+
+            // 1. Filter Table Rows
+            const rows = document.querySelectorAll('tbody tr');
+            rows.forEach(row => {
+                const text = row.textContent.toLowerCase();
+                const searchAttr = (row.getAttribute('data-search') || '').toLowerCase();
+                row.style.display = (text.includes(query) || searchAttr.includes(query)) ? '' : 'none';
+            });
+
+            // 2. Filter Heatmap Cells (.heat-cell)
+            const heatCells = document.querySelectorAll('.heat-cell');
+            heatCells.forEach(cell => {
+                const searchAttr = (cell.getAttribute('data-search') || '').toLowerCase();
+                const symbol = cell.querySelector('.heat-symbol')?.textContent.toLowerCase() || '';
+                cell.style.display = (searchAttr.includes(query) || symbol.includes(query)) ? '' : 'none';
+            });
+
+            // 3. Filter KPI Cards inside grids (like Top Picks)
+            const kpiCards = document.querySelectorAll('#topPicksGrid .kpi-card');
+            kpiCards.forEach(card => {
+                const text = card.textContent.toLowerCase();
+                card.style.display = text.includes(query) ? '' : 'none';
+            });
         }
 
         // ── Data Loading ───────────────────────────────────────────────────────────
@@ -1614,8 +1731,8 @@
         `).join('');
 
             // Update header
-            document.getElementById('lastUpdate').textContent =
-                `Updated ${new Date().toLocaleTimeString()}`;
+            document.getElementById('lastUpdate').innerHTML =
+                `<span style="color:var(--green); font-weight:800;">LIVE</span> — ${new Date().toLocaleTimeString()}`;
         }
 
         async function loadSignals() {
@@ -1623,27 +1740,39 @@
             if (!data) return;
 
             const tbody = document.getElementById('signalsTable');
-            document.getElementById('signalsCount').textContent =
-                `${data.signals.length} signal(s)`;
 
-            if (data.signals.length === 0) {
+            // Filter data if showTopOnly is true
+            let filteredSignals = data.signals;
+            if (showTopOnly) {
+                filteredSignals = data.signals.filter(s => (s.degen_score >= 50 || s.instability_index > 1.5));
+            }
+
+            document.getElementById('signalsCount').textContent =
+                `${filteredSignals.length} signal(s) ${showTopOnly ? '(Top Rated)' : ''}`;
+
+            if (filteredSignals.length === 0) {
                 tbody.innerHTML = `
-                <tr><td colspan="11">
+                <tr><td colspan="12">
                     <div class="empty-state">
                         <div class="icon">🔍</div>
-                        <h3>No signals yet</h3>
-                        <p>The bot needs more cycles to detect anomalies. Keep it running!</p>
+                        <h3>No signals match filters</h3>
+                        <p>${showTopOnly ? 'Try switching to "All Tokens" or wait for high-confidence entries.' : 'The bot needs more cycles to detect anomalies.'}</p>
                     </div>
                 </td></tr>`;
                 return;
             }
 
-            tbody.innerHTML = data.signals.map(s => {
+            // Update Top Picks in Overview
+            const topSignals = data.signals.filter(s => (s.degen_score >= 50 || s.instability_index > 1.5));
+            renderTopPicks(topSignals);
+
+            tbody.innerHTML = filteredSignals.map(s => {
                 const displayName = s.token_symbol === "???" ? s.token_address.slice(0, 4) : s.token_symbol;
                 // V4.5: More restrictive highlighting (only top 20% of signals)
                 const isBuyable = s.confidence >= 0.70 || (s.instability_index > 1000 && s.confidence > 0.60);
                 return `
-                <tr class="${isBuyable ? 'row-buyable' : ''}">
+                <tr class="${isBuyable ? 'row-buyable' : ''}" data-search="${s.token_address} ${displayName}" 
+                    style="cursor:pointer" onclick="if(!event.target.closest('button') && !event.target.closest('svg')) showAiModal(${JSON.stringify(s).replace(/"/g, '&quot;')})">
                     <td>
                         <div class="token-info">
                             <span class="token-name">${displayName}</span>
@@ -1657,6 +1786,16 @@
                         </div>
                     </td>
                     <td><span class="score-badge ${getScoreClass(s.instability_index)}">${s.instability_index.toFixed(3)}</span></td>
+                    <td>
+                        <div style="cursor:pointer; display:flex; flex-direction:column; align-items:center;" onclick="showAiModal(${JSON.stringify(s).replace(/"/g, '&quot;')})">
+                            <div class="verdict-tag v-${s.ai_analysis?.verdict || 'WAIT'}" style="font-size:10px; padding:2px 6px; margin-bottom:4px; border-radius:4px;">
+                                ${s.ai_analysis?.verdict || 'WAIT'}
+                            </div>
+                            <div style="font-weight:800; color:${s.degen_score > 70 ? 'var(--green)' : s.degen_score > 40 ? 'var(--yellow)' : 'var(--red)'}; font-size:16px; line-height:1;">
+                                ${s.degen_score || '??'}
+                            </div>
+                        </div>
+                    </td>
                     <td class="mono">
                         <div>$${formatNum(s.entry_price)}</div>
                         <div style="font-size:10px; color:var(--text-muted)">
@@ -1670,11 +1809,6 @@
                     <td class="mono" style="color:var(--green)">${(s.confidence * 100).toFixed(0)}%</td>
                     <td class="mono" style="color:var(--accent)">${(s.kelly_size * 100).toFixed(1)}%</td>
                     <td class="last-update">${formatTime(s.timestamp)}</td>
-                    <td>
-                        <button class="analyst-btn" onclick="openAnalyst('${s.token_address}', '${displayName}')">
-                            🧠 Analyze
-                        </button>
-                    </td>
                     <td>
                         <div style="display:flex;gap:4px;">
                             <button class="buy-btn" onclick="openTradeModal('${s.token_address}', '${displayName}')">
@@ -1714,7 +1848,8 @@
                 // V4.5: High standards for non-signal tokens
                 const isBuyable = t.instability_index > 100.0 && t.liquidity > 5000 && t.marketcap < 1000000;
                 return `
-                <tr class="${isBuyable ? 'row-buyable' : ''}">
+                <tr class="${isBuyable ? 'row-buyable' : ''}" data-search="${t.address} ${displayName}" 
+                    style="cursor:pointer" onclick="if(!event.target.closest('button') && !event.target.closest('svg')) openAnalyst('${t.address}', '${displayName}')">
                     <td>
                         <div class="token-info">
                             <span class="token-name">${displayName}</span>
@@ -1729,6 +1864,14 @@
                     </td>
                     <td>
                         <span class="narrative-tag narrative-${t.narrative.toLowerCase()}">${t.narrative}</span>
+                    </td>
+                    <td>
+                        <div style="cursor:pointer;" onclick="openAnalyst('${t.address}', '${displayName}')">
+                            <div style="font-weight:800; color:'var(--text-muted)'; font-size:16px;">
+                                ??
+                            </div>
+                            <div style="font-size:9px; color:var(--text-muted); line-height:1;">Analyze</div>
+                        </div>
                     </td>
                     <td class="mono">
                         <div>$${formatNum(t.price)}</div>
@@ -1746,11 +1889,6 @@
                         <span class="negative">${t.sells_5m}</span>
                     </td>
                     <td><span class="score-badge ${getScoreClass(t.instability_index)}">${t.instability_index.toFixed(2)}</span></td>
-                    <td>
-                        <button class="analyst-btn" onclick="openAnalyst('${t.address}', '${displayName}')">
-                            🧠 Analyze
-                        </button>
-                    </td>
                     <td>
                         <div style="display:flex;gap:4px;">
                             <button class="buy-btn" onclick="openTradeModal('${t.address}', '${displayName}')">
@@ -1786,7 +1924,7 @@
             }
 
             tbody.innerHTML = data.wallets.map(w => `
-            <tr>
+            <tr data-search="${w.wallet}">
                 <td class="token-address">${w.wallet.slice(0, 8)}…${w.wallet.slice(-6)}</td>
                 <td class="mono ${w.avg_roi > 1 ? 'positive' : 'negative'}">${w.avg_roi.toFixed(2)}x</td>
                 <td class="mono">${w.total_trades}</td>
@@ -1795,6 +1933,41 @@
                 <td class="last-update">${w.last_active ? formatTime(w.last_active) : '—'}</td>
             </tr>
         `).join('');
+        }
+
+        function showAiModal(signal) {
+            const modal = document.getElementById('analystModal');
+            modal.style.display = 'flex';
+
+            document.getElementById('analystTokenName').textContent = `AI Analysis of ${signal.token_symbol}`;
+
+            // If we have cached/stored analysis, show it immediately
+            if (signal.ai_summary) {
+                const verdict = signal.ai_analysis?.verdict || 'WAIT';
+                document.getElementById('analystVerdict').textContent = verdict;
+                document.getElementById('analystVerdict').className = `verdict-badge v-${verdict}`;
+                document.getElementById('analystScore').textContent = signal.degen_score || '??';
+
+                const scoreValue = signal.degen_score || 50;
+                const scoreColor = scoreValue > 70 ? 'var(--green)' : scoreValue > 40 ? 'var(--yellow)' : 'var(--red)';
+                document.getElementById('analystScore').style.color = scoreColor;
+                document.getElementById('analystProgress').style.width = `${scoreValue}%`;
+                document.getElementById('analystProgress').style.background = scoreColor;
+
+                document.getElementById('analystSummary').textContent = signal.ai_summary;
+
+                // Construct risk list from analysis object if possible
+                let risks = signal.ai_analysis?.risks || [];
+                document.getElementById('analystRisks').innerHTML = risks.map(r => `<li class="risk-item">${r}</li>`).join('');
+
+                document.getElementById('analystBuyBtn').onclick = () => {
+                    closeAnalyst();
+                    openTradeModal(signal.token_address, signal.token_symbol);
+                };
+            } else {
+                // Fallback to fetching it
+                openAnalyst(signal.token_address, signal.token_symbol);
+            }
         }
 
         // ── AI Analyst ────────────────────────────────────────────────────────────
@@ -1926,6 +2099,7 @@
                 loadSolPrice(),
                 fetchAnalytics(),
             ]);
+            filterAllTables();
         }
 
         // ── Init ───────────────────────────────────────────────────────────────────
@@ -2033,7 +2207,7 @@
                 } else {
                     tbody.innerHTML = data.positions.map(p => {
                         const roiColor = p.roi_pct >= 0 ? 'var(--green)' : 'var(--red)';
-                        return `<tr>
+                        return `<tr data-search="${p.token_address} ${p.symbol}">
                             <td><div class="token-info"><span class="token-name">${p.symbol}</span><span class="token-address">${p.token_address.slice(0, 6)}…</span></div></td>
                             <td class="mono">${p.amount_sol.toFixed(3)} SOL</td>
                             <td class="mono">
@@ -2101,12 +2275,54 @@
             }
         }
 
+        function renderTopPicks(signals) {
+            const container = document.getElementById('topPicksContainer');
+            const grid = document.getElementById('topPicksGrid');
+
+            // Focus on top 3 by score
+            const top = [...signals]
+                .sort((a, b) => b.degen_score - a.degen_score)
+                .slice(0, 3);
+
+            if (top.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'block';
+            grid.innerHTML = top.map(s => {
+                const displayName = s.token_symbol === "???" ? s.token_address.slice(0, 4) : s.token_symbol;
+                const scoreColor = s.degen_score > 70 ? 'var(--green)' : 'var(--yellow)';
+
+                return `
+                    <div class="kpi-card" style="border: 2px solid ${scoreColor}; box-shadow: 0 0 20px rgba(16, 185, 129, 0.1);">
+                        <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:12px;">
+                            <div class="token-info">
+                                <span class="token-name" style="font-size: 20px;">${displayName}</span>
+                                <span class="token-address">${s.token_address.slice(0, 10)}...</span>
+                            </div>
+                            <div class="score-badge v-BUY" style="font-size: 14px; padding: 6px 12px;">SCORE: ${s.degen_score || '??'}</div>
+                        </div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; font-size:13px; color:var(--text-secondary);">
+                            <div>Market Cap: <b>$${formatNum(s.marketcap)}</b></div>
+                            <div>Liquidity: <b>$${formatNum(s.liquidity)}</b></div>
+                            <div>Instability: <b style="color:var(--accent)">${s.instability_index.toFixed(2)}</b></div>
+                            <div>Confidence: <b style="color:var(--green)">${(s.confidence * 100).toFixed(0)}%</b></div>
+                        </div>
+                        <button class="action-btn primary" onclick="openTradeModal('${s.token_address}', '${displayName}')">
+                            ⚡ Quick Buy ${displayName}
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+
         async function loadSolPrice() {
             const data = await fetchAPI('/api/trade/sol-price');
             if (data && data.price) {
                 solPriceUsd = data.price;
                 const el = document.getElementById('solPriceText');
-                if (el) el.textContent = `$${data.price.toFixed(2)}`;
+                if (el) el.textContent = `$${data.price.toFixed(2)} `;
             }
         }
 
@@ -2158,36 +2374,42 @@
                 return;
             }
 
+            // Find the minimum instability to mark the "Best"
+            const minII = Math.min(...data.map(d => d.instability_index));
+
             container.innerHTML = data.map(item => {
-                // Color scale: Red intensity based on instability (0-100)
-                // We want a gradient from blue/purple (low) to red (high)
                 const score = Math.min(Math.max(item.instability_index, 0), 100);
 
-                // HSL: 
-                // Low (0) -> Blue/Purple (240)
-                // High (100) -> Red (0)
-                // We map 0-100 quite aggressively. 
-                // Let's say Safe is < 20. 
-
                 let bg;
-                if (score > 50) {
-                    // Red zone
-                    const opacity = 0.2 + (score / 200);
+                let textCol = 'var(--text-primary)';
+
+                if (item.instability_index === minII && score < 10) {
+                    // THE BEST (Absolute lowest II and under threshold)
+                    bg = 'var(--green)';
+                    textCol = '#000';
+                } else if (score > 50) {
+                    // High Risk
+                    const opacity = 0.4 + (score / 200);
                     bg = `rgba(239, 68, 68, ${opacity})`;
-                } else if (score > 20) {
-                    // Yellow/Orange
-                    const opacity = 0.2 + (score / 200);
+                    textCol = '#fff';
+                } else if (score > 15) {
+                    // Moderate
+                    const opacity = 0.3 + (score / 150);
                     bg = `rgba(245, 158, 11, ${opacity})`;
+                } else if (score > 5) {
+                    // Normal
+                    bg = `rgba(99, 102, 241, 0.3)`;
                 } else {
-                    // Chill zone
-                    bg = `rgba(99, 102, 241, 0.1)`;
+                    // Stable/Good
+                    bg = `rgba(16, 185, 129, 0.2)`;
                 }
 
                 return `
-                    <div class="heat-cell" style="background: ${bg}" onclick="analyzeToken('${item.address}')">
-                        <div class="heat-symbol">${item.symbol}</div>
-                        <div class="heat-val">II: ${score.toFixed(1)}</div>
-                        <div class="heat-val" style="font-size: 9px; opacity: 0.5">Vel: ${item.velocity.toFixed(0)}%</div>
+                    <div class="heat-cell" data-search="${item.address} ${item.symbol}" style="background: ${bg}" onclick="analyzeToken('${item.address}')">
+                        <div class="heat-symbol" style="color: ${textCol}">${item.symbol}</div>
+                        <div class="heat-address">${item.address.slice(0, 4)}...${item.address.slice(-4)}</div>
+                        <div class="heat-val" style="color: ${textCol}">II: ${score.toFixed(1)}</div>
+                        <div class="heat-val" style="font-size: 9px; opacity: 0.7; color: ${textCol}">Vol: $${formatNum(item.volume_5m)}</div>
                     </div>
                 `;
             }).join('');
@@ -2201,12 +2423,12 @@
             }
 
             container.innerHTML = data.map((item, idx) => `
-                <div class="explosive-item">
+                <div class="explosive-item" style="cursor:pointer; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='rgba(255,255,255,0.03)'" onclick="window.open('https://dexscreener.com/solana/${item.address}', '_blank')">
                     <div style="display:flex; gap:12px; align-items:center;">
                         <span style="font-weight:700; color:var(--accent); width:20px;">#${idx + 1}</span>
                         <div>
-                            <div style="font-weight:600; font-size:13px;">${item.symbol}</div>
-                             <div style="font-size:11px; color:var(--text-muted); cursor:pointer;" onclick="navigator.clipboard.writeText('${item.address}')">${item.address.slice(0, 4)}...${item.address.slice(-4)}</div>
+                            <div style="font-weight:600; font-size:13px; color:var(--text-primary);">${item.symbol}</div>
+                             <div style="font-size:11px; color:var(--text-muted); cursor:pointer;" onclick="event.stopPropagation(); navigator.clipboard.writeText('${item.address}'); showToast('Address copied!', 'success')">${item.address.slice(0, 4)}...${item.address.slice(-4)}</div>
                         </div>
                     </div>
                     <div style="text-align:right;">

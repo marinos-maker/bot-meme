@@ -15,7 +15,7 @@ import pandas as pd
 from loguru import logger
 
 from early_detector.config import SCAN_INTERVAL, LOG_FILE, LOG_ROTATION, LOG_LEVEL, AUTO_TRADE_ENABLED, TRADE_AMOUNT_SOL, DEFAULT_TP_PCT, DEFAULT_SL_PCT, SLIPPAGE_BPS
-from early_detector.collector import fetch_new_tokens, fetch_token_metrics
+from early_detector.collector import fetch_token_metrics
 from early_detector.db import (
     get_pool, close_pool, upsert_token, insert_metrics,
     get_recent_metrics, get_smart_wallets, get_tracked_tokens, upsert_wallet,
@@ -25,7 +25,6 @@ from early_detector.features import compute_all_features
 from early_detector.smart_wallets import compute_swr, cluster_wallets, compute_insider_score
 from early_detector.scoring import compute_instability, get_signal_threshold, detect_regime
 from early_detector.signals import process_signals
-from early_detector.helius_client import fetch_token_swaps, compute_wallet_performance
 from early_detector.narrative import NarrativeManager
 from early_detector.trader import execute_buy
 from early_detector.tp_sl_monitor import tp_sl_worker
@@ -51,7 +50,7 @@ EXPERT_SEED_WALLETS = [
 
 async def discovery_worker(session: aiohttp.ClientSession) -> None:
     """Producer: Finds new tokens and pushes them to the queue."""
-    logger.info("🕵️ Discovery worker started")
+    logger.info("🕵️ Discovery worker started (PumpPortal mode)")
     seen_addrs = set()
     last_clear = asyncio.get_event_loop().time()
     
@@ -59,47 +58,32 @@ async def discovery_worker(session: aiohttp.ClientSession) -> None:
         try:
             batch = []
             
-            # Periodically clear seen_addrs every 2 hours to allow re-discovery of old tokens
-            # but keep it across cycles to avoid redundant scans in short intervals
+            # Periodically clear seen_addrs every 2 hours
             if asyncio.get_event_loop().time() - last_clear > 7200:
                 seen_addrs.clear()
                 last_clear = asyncio.get_event_loop().time()
                 logger.debug("Cleared seen_addrs cache in discovery_worker")
 
-            # 1. Discover new tokens from Birdeye (quiet if rate-limited)
-            # Increased limit to 20 for better coverage
-            new_tokens = await fetch_new_tokens(session, limit=20)
-            if new_tokens:
-                for t in new_tokens:
-                    batch.append(t)
-                    # We still add to seen_addrs to avoid duplicates if other sources find it
-                    seen_addrs.add(t["address"])
-            
-            # 2. Pick up Helius-discovered tokens that have NO metrics yet
-            # Increased limit to 30 for better coverage
-            unprocessed = await get_unprocessed_tokens(limit=30)
+            # 1. Pick up tokens discovered by PumpPortal that have NO metrics yet
+            unprocessed = await get_unprocessed_tokens(limit=50)
             if unprocessed:
-                logger.info(f"Helius pipeline: {len(unprocessed)} unprocessed tokens to analyze")
                 for addr in unprocessed:
                     if addr not in seen_addrs:
                         batch.append({"address": addr})
                         seen_addrs.add(addr)
-            
-            # 3. Re-scan recently tracked tokens to keep data fresh
-            # Increased limit to 15 (now correctly sorted by database update time)
-            tracked_addrs = await get_tracked_tokens(limit=15)
+
+            # 2. Re-scan recently tracked tokens to keep data fresh
+            tracked_addrs = await get_tracked_tokens(limit=100)
             if tracked_addrs:
-                # logger.debug(f"Re-scanning {len(tracked_addrs)} recently tracked tokens")
                 for addr in tracked_addrs:
-                    # For tracked, we ALWAYS want a fresh scan, so we don't use seen_addrs filter
-                    # but we avoid duplicates in the SAME batch
-                    if not any(b["address"] == addr for b in batch):
+                    if addr not in seen_addrs:
                         batch.append({"address": addr})
+                        seen_addrs.add(addr)
 
             if batch:
-                # V4.2 Anti-Jammed Queue: Check size before sending more tasks
+                # V4.2 Anti-Jammed Queue
                 qsize = token_queue.qsize()
-                if qsize > 10:
+                if qsize > 15:
                     logger.warning(f"⚠️ Processors jammed (Queue size: {qsize}). Skipping discovery cycle.")
                 else:
                     logger.info(f"📦 Sending batch of {len(batch)} tokens to processors")
@@ -124,11 +108,11 @@ async def processor_worker_batch(worker_id: int, session: aiohttp.ClientSession)
             # Process tokens with limited concurrency
             # to avoid overwhelming free-tier APIs and credit exhaustion
             results = []
-            batch_sem = asyncio.Semaphore(3) # Increase to 3 concurrent tasks per worker
+            batch_sem = asyncio.Semaphore(5) # Increase to 5 concurrent tasks per worker
             async def _throttled(tok):
                 async with batch_sem:
                     res = await process_token_to_features(session, tok)
-                    await asyncio.sleep(1.0) # Reduced from 3.0s for better throughput
+                    await asyncio.sleep(0.5) # Reduced from 1.0s for better throughput
                     return res
             tasks = [_throttled(t) for t in token_batch]
             results = await asyncio.gather(*tasks)
@@ -188,19 +172,8 @@ async def processor_worker_batch(worker_id: int, session: aiohttp.ClientSession)
                         balance = await get_sol_balance(session)
                         
                         for sig in signals:
-                            # ── AI Analyst Guard (V4.5) ──
-                            from early_detector.analyst import analyze_token_signal
-                            from early_detector.db import get_recent_metrics
-                            
-                            logger.info(f"🧠 AI Guard: Requesting analysis for {sig['symbol']}...")
-                            hist = await get_recent_metrics(sig["token_id"], minutes=30)
-                            ai_result = await analyze_token_signal(sig, hist)
-                            
-                            if ai_result.get("verdict") != "BUY":
-                                logger.info(f"🚫 AI Guard: Verdict {ai_result.get('verdict')} for {sig['symbol']} — SKIPPING TRADE")
-                                continue
-                            
-                            logger.info(f"🎯 AI Guard: Verdict BUY for {sig['symbol']} (Rating: {ai_result.get('rating')}/10). Proceeding...")
+                            # AI Guard disabled by USER request
+                            # (Signals are already filtered by quantitative quality gate in process_signals)
 
                             if balance < TRADE_AMOUNT_SOL:
                                 logger.warning(f"⚠️ Saldo insufficiente ({balance:.4f} SOL) per tradare {TRADE_AMOUNT_SOL} SOL. Salto.")
@@ -255,13 +228,9 @@ async def process_token_to_features(session, tok) -> dict | None:
             return None
 
         # ── Step 1: Attempt to Resolve Metadata ──
-        # Prioritize Metrics (Dex/Birdeye), then Helius (Security), then Dex Light Fallback
-        m_name = (metrics.get("name") or 
-                  metrics.get("helius_name") or 
-                  metrics.get("dex_name"))
-        m_symbol = (metrics.get("symbol") or 
-                    metrics.get("helius_symbol") or 
-                    metrics.get("dex_symbol"))
+        # Prioritize Metrics, then fallback to current values
+        m_name = (metrics.get("name") or metrics.get("dex_name"))
+        m_symbol = (metrics.get("symbol") or metrics.get("dex_symbol"))
         
         if m_name and (not name or name == "Unknown" or name == "???"): 
             name = m_name
@@ -407,18 +376,17 @@ async def process_token_to_features(session, tok) -> dict | None:
 
 
 async def update_wallet_profiles_job(session):
-    """Periodic job to update wallet profiles."""
+    """Periodic job to refresh smart wallet list."""
     global smart_wallet_list
     while True:
-        logger.info("Updating wallet profiles...")
         try:
-             await update_wallet_profiles(session)
+             # Just reload from DB as PumpPortal worker updates stats in real-time
              smart_wallet_list = await get_smart_wallets()
-             logger.info(f"Refreshed smart wallet list: {len(smart_wallet_list)}")
+             logger.info(f"Refreshed smart wallet list from DB: {len(smart_wallet_list)}")
         except Exception as e:
-            logger.error(f"Wallet update error: {e}")
+            logger.error(f"Wallet list refresh error: {e}")
         
-        await asyncio.sleep(300) # every 5 min
+        await asyncio.sleep(60) # every minute
 
 
 async def db_maintenance_job():
@@ -438,25 +406,14 @@ async def db_maintenance_job():
 async def run() -> None:
     """Main entry point."""
     logger.info("=" * 60)
-    logger.info("🚀 Solana Early Detector v4.0 (Alpha Engine) starting…")
+    logger.info("🚀 Solana Early Detector v4.0 (PumpPortal Only) starting…")
     logger.info("=" * 60)
 
     global smart_wallet_list
     await get_pool()
     smart_wallet_list = await get_smart_wallets()
-    if not smart_wallet_list:
-        logger.warning("No smart wallets loaded. Bot will start with Cold Start mode (profiling active).")
-    else:
-        logger.info(f"Loaded {len(smart_wallet_list)} smart wallets (e.g., {', '.join(smart_wallet_list[:3])}...)")
-
+    
     async with aiohttp.ClientSession() as session:
-        # 1. Cold Start: load seeds if DB is empty, then start profiling in background
-        if not smart_wallet_list:
-            logger.info("Cold start: Using EXPERT SEED wallets while profiling...")
-            smart_wallet_list = EXPERT_SEED_WALLETS
-            # Start profiling as a background task so it doesn't block startup
-            asyncio.create_task(update_wallet_profiles(session))
-
         # Start Workers
         producers = [
             asyncio.create_task(discovery_worker(session)),
@@ -477,54 +434,7 @@ async def run() -> None:
 
 
 
-async def update_wallet_profiles(session: aiohttp.ClientSession) -> None:
-    """Fetch recent swaps for tracked tokens and update wallet_performance."""
-    logger.info("Updating wallet profiles from on-chain data...")
-
-    # Batch of 30 tokens for broader coverage
-    token_addrs = await get_tracked_tokens(limit=30)
-    if not token_addrs:
-        logger.info("No active tokens found in the last 4 hours to profile.")
-        return
-
-    all_trades = []
-    logger.info(f"⏳ Profiling {len(token_addrs)} recently active tokens for wallet performance...")
-    for addr in token_addrs:
-        try:
-            trades = await fetch_token_swaps(session, addr, limit=50)
-            if trades:
-                 logger.info(f"✅ Found {len(trades)} swaps for {addr[:8]}")
-                 all_trades.extend(trades)
-        except Exception as e:
-            logger.warning(f"Failed to fetch trades for {addr[:8]}: {e}")
-        # Be slightly faster but still respectful
-        await asyncio.sleep(1.0)
-
-    logger.info(f"Collected total {len(all_trades)} swaps from on-chain data")
-
-    wallet_stats = compute_wallet_performance(all_trades)
-    if not wallet_stats:
-        logger.info("No new wallet activity detected in this cycle.")
-        return
-
-    # Cluster wallets
-    stats_df = pd.DataFrame.from_dict(wallet_stats, orient="index")
-    stats_df.index.name = "wallet"
-    clustered = cluster_wallets(stats_df)
-
-    # Save to DB
-    saved = 0
-    for wallet_addr in clustered.index:
-        row = clustered.loc[wallet_addr]
-        await upsert_wallet(wallet_addr, {
-            "avg_roi": float(row["avg_roi"]),
-            "total_trades": int(row["total_trades"]),
-            "win_rate": float(row["win_rate"]),
-            "cluster_label": row.get("cluster_label", "unknown"),
-        })
-        saved += 1
-
-    logger.info(f"Updated {saved} wallet profiles in database")
+# Removed update_wallet_profiles – Helius RPC disabled.
 
 
 if __name__ == "__main__":

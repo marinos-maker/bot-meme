@@ -16,15 +16,22 @@ from solders.rpc.requests import SendVersionedTransaction
 from solders.rpc.config import RpcSendTransactionConfig
 
 from early_detector.config import (
-    WALLET_PRIVATE_KEY, HELIUS_RPC_URL, SOL_MINT, SLIPPAGE_BPS, PUMPPORTAL_API_KEY
+    WALLET_PRIVATE_KEY, ALCHEMY_RPC_URL, SOL_MINT, SLIPPAGE_BPS, PUMPPORTAL_API_KEY
 )
 from early_detector.cache import cache
 
 # PumpPortal Lightning API (LOCAL version for signing on client)
 PUMPPORTAL_TRADE_URL = "https://pumpportal.fun/api/trade-local"
 
+# Public fallback
+PUBLIC_SOLANA_RPC = "https://api.mainnet-beta.solana.com"
+
 # Rate limiter
 _sem = asyncio.Semaphore(1)  # One trade at a time
+
+def get_rpc_url() -> str:
+    """Get the active RPC URL (Alchemy > fallback)."""
+    return ALCHEMY_RPC_URL or PUBLIC_SOLANA_RPC
 
 # ── Wallet Setup ─────────────────────────────────────────────────────────────
 
@@ -51,7 +58,7 @@ def get_wallet_address() -> str | None:
 # ── Balance Queries ──────────────────────────────────────────────────────────
 
 async def get_sol_balance(session: aiohttp.ClientSession) -> float:
-    """Get SOL balance of the wallet with multi-tier fallback."""
+    """Get SOL balance of the wallet with fallback."""
     wallet = get_wallet_address()
     if not wallet:
         return 0.0
@@ -62,56 +69,32 @@ async def get_sol_balance(session: aiohttp.ClientSession) -> float:
         "params": [wallet]
     }
     
-    # 1. Try Helius
+    # 1. Try Primary RPC
     try:
-        async with session.post(HELIUS_RPC_URL, json=payload, timeout=8) as resp:
+        async with session.post(get_rpc_url(), json=payload, timeout=8) as resp:
             if resp.status == 200:
                 body = await resp.json()
                 if "result" in body:
                     return body["result"]["value"] / 1_000_000_000
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Primary RPC balance check failed: {e}")
 
-    # 2. Try Alchemy
-    from early_detector.config import ALCHEMY_RPC_URL
-    if ALCHEMY_RPC_URL:
+    # 2. Try Public Fallback (if primary was not public)
+    if get_rpc_url() != PUBLIC_SOLANA_RPC:
         try:
-            async with session.post(ALCHEMY_RPC_URL, json=payload, timeout=8) as resp:
+            async with session.post(PUBLIC_SOLANA_RPC, json=payload, timeout=8) as resp:
                 if resp.status == 200:
                     body = await resp.json()
                     if "result" in body:
                         return body["result"]["value"] / 1_000_000_000
         except Exception:
             pass
-
-    # 3. Try dRPC
-    from early_detector.config import DRPC_RPC_URL
-    if DRPC_RPC_URL:
-        try:
-            headers = {"Content-Type": "application/json"}
-            async with session.post(DRPC_RPC_URL, json=payload, timeout=8, headers=headers) as resp:
-                if resp.status == 200:
-                    body = await resp.json()
-                    if "result" in body:
-                        return body["result"]["value"] / 1_000_000_000
-        except Exception:
-            pass
-
-    # 3. Final Fallback: Public RPC
-    try:
-        async with session.post("https://api.mainnet-beta.solana.com", json=payload, timeout=8) as resp:
-            if resp.status == 200:
-                body = await resp.json()
-                if "result" in body:
-                    return body["result"]["value"] / 1_000_000_000
-    except Exception:
-        pass
 
     return 0.0
 
 
 async def get_token_balance(session: aiohttp.ClientSession, token_address: str) -> float:
-    """Get SPL token balance of the wallet with multi-tier fallback."""
+    """Get SPL token balance of the wallet."""
     wallet = get_wallet_address()
     if not wallet:
         return 0.0
@@ -126,9 +109,8 @@ async def get_token_balance(session: aiohttp.ClientSession, token_address: str) 
         ]
     }
     
-    # 1. Try Helius
     try:
-        async with session.post(HELIUS_RPC_URL, json=payload, timeout=8) as resp:
+        async with session.post(get_rpc_url(), json=payload, timeout=8) as resp:
             if resp.status == 200:
                 body = await resp.json()
                 if "result" in body:
@@ -138,25 +120,8 @@ async def get_token_balance(session: aiohttp.ClientSession, token_address: str) 
                         info = acc.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
                         total += float(info.get("tokenAmount", {}).get("uiAmount", 0) or 0)
                     return total
-    except Exception:
-        pass
-
-    # 2. Try Alchemy
-    from early_detector.config import ALCHEMY_RPC_URL
-    if ALCHEMY_RPC_URL:
-        try:
-            async with session.post(ALCHEMY_RPC_URL, json=payload, timeout=8) as resp:
-                if resp.status == 200:
-                    body = await resp.json()
-                    if "result" in body:
-                        accounts = body["result"]["value"]
-                        total = 0.0
-                        for acc in accounts:
-                            info = acc.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
-                            total += float(info.get("tokenAmount", {}).get("uiAmount", 0) or 0)
-                        return total
-        except Exception:
-            pass
+    except Exception as e:
+        logger.debug(f"Token balance check failed: {e}")
 
     return 0.0
 
@@ -175,6 +140,13 @@ async def execute_buy(session: aiohttp.ClientSession,
 
     async with _sem:
         try:
+            # V4.7: Pre-trade balance check
+            balance = await get_sol_balance(session)
+            if balance < amount_sol + 0.005: # amount + buffer for fees/rent
+                msg = f"Saldo SOL insufficiente: hai {balance:.4f} SOL, desideri spendere {amount_sol} SOL. (Buffer richiesto per fees/rent: 0.005 SOL)"
+                logger.warning(f"⚠️ {msg}")
+                return {"success": False, "error": msg}
+
             slippage_pct = slippage_bps / 100.0
             
             # Prepare PumpPortal request (trade-local)
@@ -183,9 +155,6 @@ async def execute_buy(session: aiohttp.ClientSession,
                 return {"success": False, "error": "Public key non trovata"}
 
             # Improved pool selection for PumpPortal
-            pool_type = "pump" if token_address.endswith("pump") else "raydium"
-
-            url = PUMPPORTAL_TRADE_URL
             payload = {
                 "publicKey": publicKey,
                 "action": "buy",
@@ -194,14 +163,14 @@ async def execute_buy(session: aiohttp.ClientSession,
                 "denominatedInSol": True,
                 "slippage": float(slippage_pct),
                 "priorityFee": 0.0001,
-                "pool": pool_type
+                "pool": "auto"
             }
 
             # 1. Fetch transaction from PumpPortal
-            logger.info(f"🚀 Fetching BUY transaction from PumpPortal ({pool_type}) for {token_address}...")
+            logger.info(f"🚀 Fetching BUY transaction from PumpPortal (auto) for {token_address} (Balance: {balance:.4f} SOL)...")
             logger.info(f"Payload: {payload}")
             
-            async with session.post(url, json=payload, timeout=20) as resp:
+            async with session.post(PUMPPORTAL_TRADE_URL, json=payload, timeout=20) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logger.error(f"PumpPortal API error {resp.status}: {error_text}")
@@ -223,8 +192,8 @@ async def execute_buy(session: aiohttp.ClientSession,
                 config = RpcSendTransactionConfig(preflight_commitment=commitment)
                 send_tx_payload = SendVersionedTransaction(tx, config).to_json()
                 
-                # Send to RPC (Helius)
-                async with session.post(HELIUS_RPC_URL, headers={"Content-Type": "application/json"}, data=send_tx_payload) as rpc_resp:
+                # Send to RPC
+                async with session.post(get_rpc_url(), headers={"Content-Type": "application/json"}, data=send_tx_payload) as rpc_resp:
                     rpc_data = await rpc_resp.json()
                     if rpc_resp.status != 200 or "result" not in rpc_data:
                         err = rpc_data.get("error", "Unknown RPC error")
@@ -291,9 +260,6 @@ async def execute_sell(session: aiohttp.ClientSession,
                 return {"success": False, "error": "Public key non trovata"}
 
             # Improved pool selection for PumpPortal
-            pool_type = "pump" if token_address.endswith("pump") else "raydium"
-
-            url = PUMPPORTAL_TRADE_URL
             payload = {
                 "publicKey": publicKey,
                 "action": "sell",
@@ -302,14 +268,14 @@ async def execute_sell(session: aiohttp.ClientSession,
                 "denominatedInSol": False,
                 "slippage": float(slippage_pct),
                 "priorityFee": 0.0001,
-                "pool": pool_type
+                "pool": "auto"
             }
 
             # 1. Fetch transaction from PumpPortal
-            logger.info(f"🚀 Fetching SELL transaction from PumpPortal ({pool_type}) for {token_address}...")
+            logger.info(f"🚀 Fetching SELL transaction from PumpPortal (auto) for {token_address}...")
             logger.info(f"Payload: {payload}")
             
-            async with session.post(url, json=payload, timeout=20) as resp:
+            async with session.post(PUMPPORTAL_TRADE_URL, json=payload, timeout=20) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logger.error(f"PumpPortal API error {resp.status}: {error_text}")
@@ -331,8 +297,8 @@ async def execute_sell(session: aiohttp.ClientSession,
                 config = RpcSendTransactionConfig(preflight_commitment=commitment)
                 send_tx_payload = SendVersionedTransaction(tx, config).to_json()
                 
-                # Send to RPC (Helius)
-                async with session.post(HELIUS_RPC_URL, headers={"Content-Type": "application/json"}, data=send_tx_payload) as rpc_resp:
+                # Send to RPC
+                async with session.post(get_rpc_url(), headers={"Content-Type": "application/json"}, data=send_tx_payload) as rpc_resp:
                     rpc_data = await rpc_resp.json()
                     if rpc_resp.status != 200 or "result" not in rpc_data:
                         err = rpc_data.get("error", "Unknown RPC error")

@@ -63,7 +63,7 @@ async def api_overview():
     pool = await get_pool()
 
     tokens_count = await pool.fetchval("SELECT COUNT(*) FROM tokens")
-    wallets_count = await pool.fetchval("SELECT COUNT(*) FROM wallet_performance")
+    wallets_count = await pool.fetchval("SELECT COUNT(*) FROM wallet_performance WHERE total_trades > 0")
     signals_count = await pool.fetchval("SELECT COUNT(*) FROM signals")
     from early_detector.config import SW_MIN_ROI, SW_MIN_TRADES, SW_MIN_WIN_RATE
     smart_count = await pool.fetchval(
@@ -101,7 +101,7 @@ async def api_signals(limit: int = 50):
         """
         SELECT s.id, s.timestamp, s.instability_index, s.entry_price,
                s.liquidity, s.marketcap, s.confidence, s.kelly_size,
-               s.insider_psi, s.creator_risk,
+               s.insider_psi, s.creator_risk, s.degen_score, s.ai_summary, s.ai_analysis,
                t.address, t.name, t.symbol
         FROM signals s
         JOIN tokens t ON t.id = s.token_id
@@ -132,6 +132,14 @@ async def api_signals(limit: int = 50):
         if not math.isfinite(psi): psi = 0
         if not math.isfinite(risk): risk = 0
 
+        import json
+        ai_analysis = r["ai_analysis"]
+        if isinstance(ai_analysis, str):
+            try:
+                ai_analysis = json.loads(ai_analysis)
+            except:
+                pass
+
         signals.append({
             "id": r["id"],
             "timestamp": r["timestamp"].isoformat() if r["timestamp"] else None,
@@ -143,6 +151,9 @@ async def api_signals(limit: int = 50):
             "kelly_size": kelly,
             "insider_psi": psi,
             "creator_risk": risk,
+            "degen_score": r["degen_score"],
+            "ai_summary": r["ai_summary"],
+            "ai_analysis": ai_analysis,
             "token_address": r["address"],
             "token_name": r["name"] or "Unknown",
             "token_symbol": r["symbol"] or "???",
@@ -323,15 +334,15 @@ async def api_analytics():
     # Get latest metrics for all active tokens (last 30m, fallback to 4h if none)
     interval = '30 minutes'
     rows = await pool.fetch(
-        f"""
-        SELECT DISTINCT ON (t.id)
+        """
+        SELECT DISTINCT ON (t.address)
             t.address, t.symbol, t.name,
             m.price, m.marketcap, m.liquidity, 
             m.volume_5m, m.instability_index, m.timestamp
         FROM tokens t
         JOIN token_metrics_timeseries m ON m.token_id = t.id
-        WHERE m.timestamp > NOW() - INTERVAL '{interval}'
-        ORDER BY t.id, m.timestamp DESC
+        WHERE m.timestamp > NOW() - INTERVAL '2 minutes'
+        ORDER BY t.address, m.timestamp DESC
         """
     )
     
@@ -390,15 +401,24 @@ async def api_analytics():
             "liquidity": liq,
             "marketcap": mcap,
             "volume_5m": vol,
-            "velocity": velocity
+            "velocity": velocity,
+            "timestamp": r["timestamp"]
         })
     
     # Narrative Statistics
     narrative_stats = NarrativeManager.get_narrative_stats(data)
     
-    # Sorts
-    explosive = sorted(data, key=lambda x: x["velocity"], reverse=True)[:10]
-    unstable = sorted(data, key=lambda x: x["instability_index"], reverse=True)[:10]
+    # Sorts - FILTERING: Only show tokens with real liquidity (> $500) 
+    # AND updated in the last 2 minutes to avoid stale 'explosive' signals
+    from datetime import datetime, timedelta, timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+    
+    fresh_data = [d for d in data if d["timestamp"] > cutoff]
+    
+    real_market_data = [d for d in fresh_data if d["liquidity"] > 500]
+    
+    explosive = sorted(real_market_data, key=lambda x: x["velocity"], reverse=True)[:10]
+    unstable = sorted(fresh_data, key=lambda x: x["instability_index"], reverse=True)[:10]
     
     return {
         "heatmap": data,
@@ -606,75 +626,14 @@ async def api_logs(limit: int = 100):
         return {"logs": f"Error reading logs: {e}"}
 
 
-@app.get("/api/webhook/helius/test")
-async def test_webhook_get():
-    """Manual connectivity test via browser."""
-    logger.info("MANUAL TEST: Webhook GET route reached!")
-    return {"status": "ok", "message": "Manual test OK - Server is reachable!"}
-
-
-@app.post("/api/webhook/helius")
-async def helius_webhook(request: Request, background_tasks: BackgroundTasks):
-    """
-    Handle Helius Webhooks (New Mints or Swaps).
-    Immediate response (200 OK) to prevent timeouts.
-    """
-    try:
-        # Read raw body immediately
-        body = await request.body()
-        logger.info(f"📥 Received Webhook from Helius: {len(body)} bytes")
-        
-        # Offload parsing and DB work to background
-        background_tasks.add_task(process_helius_payload, body)
-        return {"status": "ok"}
-    except Exception as e:
-        logger.error(f"Webhook receiver error: {e}")
-        return {"status": "error"}
-
-
-async def process_helius_payload(body: bytes):
-    """Background task to parse JSON and upsert tokens."""
-    try:
-        import json
-        if not body:
-            return
-            
-        payload = json.loads(body)
-        from early_detector.db import upsert_token
-        
-        if isinstance(payload, dict):
-            events = [payload]
-        elif isinstance(payload, list):
-            events = payload
-        else:
-            return
-
-        for event in events:
-            e_type = str(event.get("type", "")).upper()
-            if e_type in ["MINT", "TOKEN_MINT", "SWAP"]:
-                transfers = event.get("tokenTransfers", [])
-                for tx in transfers:
-                    mint = tx.get("mint")
-                    if mint and mint != "So11111111111111111111111111111111111111112":
-                        # Only provide name/symbol if we absolutely have to.
-                        # Using None for name/symbol in upsert_token will preserve existing values.
-                        await upsert_token(mint) 
-                        logger.info(f"Helius Webhook: Discovered {mint} via {e_type}")
-    except Exception as e:
-        logger.error(f"Background webhook error: {e}")
+# Helius Webhook processing removed.
 
 
 # ── HTML Dashboard ────────────────────────────────────────────────────────────
 
-@app.api_route("/", methods=["GET", "POST"], response_class=HTMLResponse)
-async def serve_dashboard(request: Request, background_tasks: BackgroundTasks):
-    """Serve the dashboard HTML (GET) or handle misplaced Webhooks (POST)."""
-    if request.method == "POST":
-        # Fallback to handle Helius hitting the root path
-        body = await request.body()
-        background_tasks.add_task(process_helius_payload, body)
-        return JSONResponse(status_code=200, content={"status": "ok", "note": "Root path fallback"})
-    
+@app.get("/", response_class=HTMLResponse)
+async def serve_dashboard():
+    """Serve the dashboard HTML."""
     html_path = Path(__file__).parent / "static" / "dashboard.html"
     return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
 

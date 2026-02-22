@@ -12,15 +12,9 @@ SUPABASE_DB_URL: str = os.getenv("SUPABASE_DB_URL", "")
 DATA_DIR: str = os.getenv("DATA_DIR", ".")
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
-BIRDEYE_API_KEY: str = os.getenv("BIRDEYE_API_KEY", "")
 DEXSCREENER_API_URL: str = os.getenv(
     "DEXSCREENER_API_URL", "https://api.dexscreener.com/latest"
 )
-HELIUS_API_KEY: str = os.getenv("HELIUS_API_KEY", "")
-HELIUS_BASE_URL: str = "https://api.helius.xyz"
-HELIUS_RPC_URL: str = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-DRPC_API_KEY: str = os.getenv("DRPC_API_KEY", "")
-DRPC_RPC_URL: str = os.getenv("DRPC_RPC_URL", "")
 PUMPPORTAL_API_KEY: str = os.getenv("PUMPPORTAL_API_KEY", "")
 GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
 WALLET_PUBLIC_KEY: str = os.getenv("WALLET_PUBLIC_KEY", "")
@@ -31,7 +25,7 @@ TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # ── Trading Filters ──────────────────────────────────────────────────────────
-LIQUIDITY_MIN: float = float(os.getenv("LIQUIDITY_MIN", "10000"))
+LIQUIDITY_MIN: float = float(os.getenv("LIQUIDITY_MIN", "2500"))
 MCAP_MAX: float = float(os.getenv("MCAP_MAX", "5000000"))
 TOP10_MAX_RATIO: float = float(os.getenv("TOP10_MAX_RATIO", "0.35"))
 
@@ -47,9 +41,9 @@ WEIGHT_VI: float = 2.0        # Volume Intensity (Turnover)
 WEIGHT_SELL: float = 2.0      # Sell Pressure (subtracted)
 
 # ── Smart Wallet Thresholds ───────────────────────────────────────────────────
-SW_MIN_ROI: float = 1.2    # Lowered from 1.5 for better coverage
-SW_MIN_TRADES: int = 3     # Lowered from 5 for early phase
-SW_MIN_WIN_RATE: float = 0.3
+SW_MIN_ROI: float = 1.1
+SW_MIN_TRADES: int = 2
+SW_MIN_WIN_RATE: float = 0.25
 
 # ── Timing ────────────────────────────────────────────────────────────────────
 SCAN_INTERVAL: int = int(os.getenv("SCAN_INTERVAL", "15"))  # Reduced for V4.0 latency
@@ -59,15 +53,6 @@ DASHBOARD_PORT: int = int(os.getenv("DASHBOARD_PORT", "8050"))
 MAX_TOP5_HOLDER_RATIO: float = 0.40
 DEV_WALLET_TIMEOUT_MIN: int = 10
 SPIKE_THRESHOLD: float = 5.0   # 5x in 5 min = too late
-
-# ── Birdeye API ───────────────────────────────────────────────────────────────
-BIRDEYE_BASE_URL: str = "https://public-api.birdeye.so"
-BIRDEYE_HEADERS: dict = {
-    "X-API-Key": BIRDEYE_API_KEY,
-    "x-chain": "solana",
-    "accept": "application/json",
-    "Content-Type": "application/json",
-}
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_FILE: str = "logs/runtime.log"
