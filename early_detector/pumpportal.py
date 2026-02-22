@@ -108,10 +108,18 @@ async def pumpportal_worker(token_queue: asyncio.Queue, smart_wallets: list[str]
                         mint = data.get("mint")
                         trader = data.get("traderPublicKey") or data.get("userPublicKey") # Fallback for different msg types
 
-                        # A. New Token Discovery
+# A. New Token Discovery
                         if tx_type == "create" and mint:
+                            # Get name/symbol from PumpPortal with fallback
                             name = data.get("name", "Unknown").replace("\x00", "")
                             symbol = data.get("symbol", "???").replace("\x00", "")
+                            
+                            # If name/symbol is still default, generate better ones
+                            if name == "Unknown" or name == "???":
+                                name = f"Token #{mint[:8]}"
+                            if symbol == "???" or symbol == "Unknown":
+                                symbol = f"TOK{mint[:4]}"
+                            
                             logger.info(f"🆕 PumpPortal: New Token {symbol} ({mint[:6]}...)")
                             await upsert_token(mint, name, symbol, narrative="GENERIC")
                         

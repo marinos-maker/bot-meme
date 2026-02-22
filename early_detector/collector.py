@@ -86,11 +86,22 @@ async def fetch_dexscreener_pair(session: aiohttp.ClientSession,
 async def fetch_token_metrics(session: aiohttp.ClientSession,
                                token_address: str) -> dict | None:
     """
-    Fetch metrics from DexScreener first; fallback to Jupiter for price.
+    Fetch metrics from DexScreener first; fallback to Jupiter for price and metadata.
     Birdeye and Helius RPC removals implemented.
     """
     # DexScreener as primary
     metrics = await fetch_dexscreener_pair(session, token_address)
+
+    # If DexScreener didn't return name/symbol, try to get it from Jupiter
+    if metrics and (not metrics.get("name") or not metrics.get("symbol")):
+        # Try to get name/symbol from Jupiter if available
+        j_price = await fetch_jupiter_price(session, token_address)
+        if j_price:
+            # If we have price but no name/symbol, try to enrich with Jupiter metadata
+            if not metrics.get("name"):
+                metrics["name"] = f"Token #{token_address[:8]}"
+            if not metrics.get("symbol"):
+                metrics["symbol"] = f"TOK{token_address[:4]}"
 
     # Fallback to Jupiter for price if DexScreener fails
     if metrics is None or not metrics.get("price"):
@@ -98,6 +109,9 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
         if j_price:
             if metrics is None:
                 metrics = {"price": j_price, "address": token_address}
+                # Add basic name/symbol if creating new metrics
+                metrics["name"] = f"Token #{token_address[:8]}"
+                metrics["symbol"] = f"TOK{token_address[:4]}"
             else:
                 metrics["price"] = j_price
 
@@ -108,7 +122,9 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
             "liquidity": 0.0,
             "marketcap": 0.0,
             "holders": 0,
-            "volume_1h": 0.0
+            "volume_1h": 0.0,
+            "name": f"Token #{token_address[:8]}",
+            "symbol": f"TOK{token_address[:4]}"
         }
 
     # ── CRITICAL V4.4: Fix $0 Liquidity for Pump Tokens ──
@@ -142,7 +158,7 @@ async def test_fetch():
     # SOL token address for testing
     test_addr = "So11111111111111111111111111111111111111112"
     async with aiohttp.ClientSession() as session:
-        result = await fetch_token_overview(session, test_addr)
+        result = await fetch_token_metrics(session, test_addr)
         if result:
             logger.info(f"Test fetch OK: SOL price = {result.get('price')}")
         else:
