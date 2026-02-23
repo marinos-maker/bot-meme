@@ -514,12 +514,28 @@ async def api_analytics():
 
 @app.post("/api/actions/seed-wallets")
 async def action_seed_wallets(background_tasks: BackgroundTasks):
-    """Trigger wallet seed script in background."""
+    """Trigger wallet seed script in background (with Helius fallback)."""
     def run_seed():
-        subprocess.run(
-            [sys.executable, "-m", "scripts.seed_wallets"],
-            cwd=str(Path(__file__).resolve().parent.parent),
-        )
+        try:
+            # Try original Helius script first
+            subprocess.run(
+                [sys.executable, "-m", "scripts.seed_wallets"],
+                cwd=str(Path(__file__).resolve().parent.parent),
+                check=True,
+                timeout=60
+            )
+            return {"message": "Seed script (Helius) started in background"}
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            logger.warning(f"Helius seed script failed: {e}")
+            logger.info("Falling back to Birdeye alternative...")
+            
+            # Fall back to Birdeye alternative
+            subprocess.run(
+                [sys.executable, "-m", "scripts.seed_wallets_alt"],
+                cwd=str(Path(__file__).resolve().parent.parent),
+                check=True,
+            )
+            return {"message": "Seed script (Birdeye fallback) started in background"}
 
     background_tasks.add_task(run_seed)
     return {"status": "started", "message": "Wallet seed script started in background"}

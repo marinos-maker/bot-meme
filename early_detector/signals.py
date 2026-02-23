@@ -17,6 +17,97 @@ from early_detector.db import insert_signal, has_recent_signal
 from early_detector.optimization import AlphaEngine
 
 
+def calculate_quantitative_degen_score(token_data: dict, confidence: float) -> int:
+    """
+    Calculate a quantitative degen score based on available metrics.
+    This provides a numerical score when AI Analyst is disabled.
+    """
+    logger.debug(f"Calculating quantitative degen score for token: {token_data.get('symbol', 'UNKNOWN')}")
+    logger.debug(f"Input data: confidence={confidence}, token_data={token_data}")
+    
+    # Base score from confidence (0-100)
+    score = confidence * 100
+    logger.debug(f"Base score from confidence: {score}")
+    
+    # Instability Index multiplier (higher II = higher score)
+    ii = token_data.get("instability", 0) or 0
+    logger.debug(f"Instability Index: {ii}")
+    if ii > 0:
+        # Normalize II to 0-50 range (most tokens have II < 100)
+        ii_score = min(ii * 0.5, 50)
+        score += ii_score
+        logger.debug(f"Added II score: {ii_score}, total: {score}")
+    
+    # Liquidity modifier (higher liquidity = more reliable)
+    liq = token_data.get("liquidity", 0) or 0
+    logger.debug(f"Liquidity: {liq}")
+    if liq > 1000:  # Good liquidity
+        score += 10
+        logger.debug(f"Added liquidity bonus: +10, total: {score}")
+    elif liq > 500:  # Moderate liquidity
+        score += 5
+        logger.debug(f"Added liquidity bonus: +5, total: {score}")
+    elif liq > 100:  # Low liquidity
+        score -= 5
+        logger.debug(f"Subtracted liquidity penalty: -5, total: {score}")
+    else:  # Very low liquidity
+        score -= 10
+        logger.debug(f"Subtracted liquidity penalty: -10, total: {score}")
+    
+    # Market Cap modifier (smaller caps = higher degen potential)
+    mcap = token_data.get("marketcap", 0) or 0
+    logger.debug(f"Market Cap: {mcap}")
+    if mcap < 50000:  # Small cap
+        score += 10
+        logger.debug(f"Added small cap bonus: +10, total: {score}")
+    elif mcap < 200000:  # Medium cap
+        score += 5
+        logger.debug(f"Added medium cap bonus: +5, total: {score}")
+    elif mcap > 1000000:  # Large cap
+        score -= 5
+        logger.debug(f"Subtracted large cap penalty: -5, total: {score}")
+    
+    # Insider Risk modifier (lower risk = higher score)
+    psi = token_data.get("insider_psi", 0) or 0
+    logger.debug(f"Insider Risk: {psi}")
+    if psi < 0.2:  # Low insider risk
+        score += 10
+        logger.debug(f"Added low insider risk bonus: +10, total: {score}")
+    elif psi > 0.5:  # High insider risk
+        score -= 10
+        logger.debug(f"Subtracted high insider risk penalty: -10, total: {score}")
+    
+    # Creator Risk modifier (lower risk = higher score)
+    creator_risk = token_data.get("creator_risk_score", 0) or 0
+    logger.debug(f"Creator Risk: {creator_risk}")
+    if creator_risk < 0.3:  # Low creator risk
+        score += 5
+        logger.debug(f"Added low creator risk bonus: +5, total: {score}")
+    elif creator_risk > 0.7:  # High creator risk
+        score -= 5
+        logger.debug(f"Subtracted high creator risk penalty: -5, total: {score}")
+    
+    # Candle analysis modifier (if available)
+    candle_score = token_data.get("candle_score", 0) or 0
+    logger.debug(f"Candle Score: {candle_score}")
+    if candle_score > 0.5:  # Good candle pattern
+        score += 10
+        logger.debug(f"Added candle pattern bonus: +10, total: {score}")
+    elif candle_score > 0.3:  # Moderate pattern
+        score += 5
+        logger.debug(f"Added candle pattern bonus: +5, total: {score}")
+    
+    # Cap the score to 0-100 range
+    score = max(0, min(100, score))
+    logger.debug(f"Final score before rounding: {score}")
+    
+    # Round to nearest integer
+    final_score = int(round(score))
+    logger.info(f"Final quantitative degen score for {token_data.get('symbol', 'UNKNOWN')}: {final_score}")
+    
+    return final_score
+
+
 def passes_trigger(token: dict, threshold: float) -> bool:
     """
     Check if a token meets ALL trigger conditions (V4.1 - More permissive):
@@ -336,16 +427,24 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
         from early_detector.diary import log_trade_signal
         log_trade_signal(signal, regime_label)
 
-        # AI Analyst disabled by USER request
-        signal["degen_score"] = None
-        signal["ai_summary"] = "AI Analyst disabled"
-        signal["ai_analysis"] = None
+        # Calculate Quantitative Degen Score (V4.8) - when AI Analyst is disabled
+        # This provides a numerical score based on available metrics
+        degen_score = calculate_quantitative_degen_score(token_data, base_confidence)
+        signal["degen_score"] = degen_score
+        signal["ai_summary"] = f"Quantitative Score: {degen_score}"
+        signal["ai_analysis"] = {
+            "verdict": "WAIT",
+            "rating": degen_score,
+            "summary": f"Score based on Instability Index ({token_data.get('instability', 0):.2f}), Liquidity (${token_data.get('liquidity', 0):.0f}), and Confidence ({base_confidence:.1%})",
+            "risks": []
+        }
 
         # V4.6 Stability Quality Gate - modified to use empty ai_result
         if not passes_quality_gate(signal, {}):
              continue
 
         # Save to DB
+        logger.debug(f"Saving signal to database: symbol={signal.get('symbol')}, degen_score={signal.get('degen_score')}")
         await insert_signal(
             token_id=signal["token_id"],
             instability_index=signal["instability_index"],
@@ -362,6 +461,7 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
             ai_summary=signal.get("ai_summary"),
             ai_analysis=signal.get("ai_analysis")
         )
+        logger.info(f"Signal saved successfully: {signal.get('symbol')} with degen_score={signal.get('degen_score')}")
 
         # Send notification
         await send_telegram_alert(signal)
