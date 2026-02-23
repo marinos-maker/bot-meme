@@ -17,7 +17,9 @@ except ImportError:
 if HAS_OPENAI and OPENAI_API_KEY:
     openai_client = AsyncOpenAI(
         api_key=OPENAI_API_KEY,
-        base_url=OPENAI_BASE_URL
+        base_url=OPENAI_BASE_URL,
+        timeout=15.0,  # Prevent 5-minute freeze if API is down
+        max_retries=1
     )
 else:
     openai_client = None
@@ -248,7 +250,7 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
 
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"AI Analyst error: {e}")
+        logger.error(f"🧠 AI Analysis error for {address[:8]}: {error_msg}")
         
         # Determine if it's a rate limit error
         is_quota = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg
