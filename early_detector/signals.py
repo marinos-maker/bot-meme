@@ -198,18 +198,18 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
         # Start with a neutral prior and apply likelihood ratios
         prior = 0.5
         likelihoods = []
-        
+
         # 1. Regime context
         if regime_label == "DEGEN":
             likelihoods.append(1.1)  # Higher turnover in degen mode often follows through
-        
+
         # 2. Risk Metrics
         creator_risk = token_data.get("creator_risk_score") or 0.5
         if creator_risk < 0.15:
             likelihoods.append(1.3)
         elif creator_risk > 0.8:
             likelihoods.append(0.7)
-            
+
         insider_psi = token_data.get("insider_psi") or 0.0
         if insider_psi < 0.1:
             likelihoods.append(1.3)
@@ -220,7 +220,7 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
         ii = token_data.get("instability_index") or 0
         if threshold > 0 and (ii / threshold) > 1.5:
             likelihoods.append(1.25)
-            
+
         delta_ii = (token_data.get("delta_instability") or 0.0)
         if delta_ii > 20:
             likelihoods.append(1.2)
@@ -233,15 +233,15 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
             likelihoods.append(1.5)
 
         base_confidence = AlphaEngine.calculate_bayesian_confidence(prior, likelihoods)
-        
+
         # Quarter Kelly sizing
         kelly_size = AlphaEngine.calculate_kelly_size(
             win_prob=base_confidence,
             avg_win_multiplier=0.45,   # Conservative targets
             avg_loss_multiplier=0.15,
-            fractional_kelly=0.25 
+            fractional_kelly=0.25
         )
-        
+
         # Point 2: Size reduction for moderate insider risk
         insider_psi = (token_data.get("insider_psi") or 0.0)
         if 0.5 <= insider_psi <= 0.75:
@@ -284,7 +284,7 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
         signal["degen_score"] = None
         signal["ai_summary"] = "AI Analyst disabled"
         signal["ai_analysis"] = None
-        
+
         # V4.6 Stability Quality Gate - modified to use empty ai_result
         if not passes_quality_gate(signal, {}):
              continue
@@ -312,7 +312,7 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
 
         signals.append(signal)
         logger.info(
-            f"🚨 SIGNAL: {signal['symbol']} ({signal['name']}) — "
+            f"🚨 SIGNAL: {signal.get('symbol', 'UNKNOWN')} ({signal.get('name', 'Unknown')}) — "
             f"II={signal['instability_index']:.3f}, "
             f"Price={signal['price']}, MCap={signal['marketcap']:.0f}"
         )
@@ -324,13 +324,29 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
 
 async def send_telegram_alert(signal: dict) -> None:
     """Send a signal alert to the configured Telegram chat."""
+    logger.debug(f"send_telegram_alert called with signal: {signal.get('symbol')} - {signal.get('name')}")
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("Telegram not configured — skipping alert")
+        logger.warning(f"TELEGRAM_BOT_TOKEN: {'Set' if TELEGRAM_BOT_TOKEN else 'Not set'}")
+        logger.warning(f"TELEGRAM_CHAT_ID: {'Set' if TELEGRAM_CHAT_ID else 'Not set'}")
         return
+
+    # Improved fallback logic for name and symbol
+    symbol = signal.get('symbol', 'UNKNOWN')
+    name = signal.get('name', 'Unknown Token')
+    
+    # If symbol is "???" or "UNKNOWN", try to use address as symbol
+    if symbol in ['???', 'UNKNOWN', '']:
+        symbol = signal.get('address', 'UNKNOWN')[:8] + '...'
+    
+    # If name is "Unknown Token" or empty, try to use address as name
+    if name in ['Unknown Token', '']:
+        name = f"Token {signal.get('address', 'UNKNOWN')[:8]}..."
 
     text = (
         f"🚨 <b>EARLY DETECTOR SIGNAL (V4.0)</b>\n\n"
-        f"🪙 <b>{signal['symbol']}</b> — {signal['name']}\n"
+        f"🪙 <b>{symbol}</b> — {name}\n"
+        f"📍 <b>Address:</b> <code>{signal.get('address', 'UNKNOWN')}</code>\n"
         f"📊 Instability Index: <code>{signal['instability_index']:.3f}</code>\n"
         f"💰 Price: <code>${signal['price']:.8f}</code>\n"
         f"💧 Liquidity: <code>${signal['liquidity']:,.0f}</code>\n"

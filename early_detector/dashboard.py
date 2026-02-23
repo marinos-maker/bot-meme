@@ -163,6 +163,76 @@ async def api_signals(limit: int = 50):
     return {"signals": signals}
 
 
+@app.get("/api/signals/recent")
+async def api_signals_recent(minutes: int = 10):
+    """Return signals generated in the last N minutes."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT s.id, s.timestamp, s.instability_index, s.entry_price,
+               s.liquidity, s.marketcap, s.confidence, s.kelly_size,
+               s.insider_psi, s.creator_risk, s.degen_score, s.ai_summary, s.ai_analysis,
+               t.address, t.name, t.symbol
+        FROM signals s
+        JOIN tokens t ON t.id = s.token_id
+        WHERE s.timestamp > NOW() - INTERVAL $1
+        ORDER BY s.timestamp DESC
+        """,
+        f"{minutes} minutes",
+    )
+
+    import math
+    signals = []
+    for r in rows:
+        ii = float(r["instability_index"] or 0)
+        price = float(r["entry_price"] or 0)
+        liq = float(r["liquidity"] or 0)
+        mcap = float(r["marketcap"] or 0)
+        conf = float(r["confidence"] or 0)
+        kelly = float(r["kelly_size"] or 0)
+        psi = float(r["insider_psi"] or 0)
+        risk = float(r["creator_risk"] or 0)
+
+        if not math.isfinite(ii): ii = 0
+        if not math.isfinite(price): price = 0
+        if not math.isfinite(liq): liq = 0
+        if not math.isfinite(mcap): mcap = 0
+        if not math.isfinite(conf): conf = 0
+        if not math.isfinite(kelly): kelly = 0
+        if not math.isfinite(psi): psi = 0
+        if not math.isfinite(risk): risk = 0
+
+        import json
+        ai_analysis = r["ai_analysis"]
+        if isinstance(ai_analysis, str):
+            try:
+                ai_analysis = json.loads(ai_analysis)
+            except:
+                pass
+
+        signals.append({
+            "id": r["id"],
+            "timestamp": r["timestamp"].isoformat() if r["timestamp"] else None,
+            "instability_index": ii,
+            "entry_price": price,
+            "liquidity": liq,
+            "marketcap": mcap,
+            "confidence": conf,
+            "kelly_size": kelly,
+            "insider_psi": psi,
+            "creator_risk": risk,
+            "degen_score": r["degen_score"],
+            "ai_summary": r["ai_summary"],
+            "ai_analysis": ai_analysis,
+            "token_address": r["address"],
+            "token_name": r["name"] or "Unknown",
+            "token_symbol": r["symbol"] or "???",
+            "buy_url": f"https://pump.fun/{r['address']}",
+        })
+
+    return {"signals": signals}
+
+
 @app.get("/api/tokens")
 async def api_tokens(limit: int = 50):
     """Return recently tracked tokens with latest metrics (LEFT JOIN for webhook/new discovery)."""
@@ -393,6 +463,17 @@ async def api_analytics():
             else:
                 display_symbol = r["address"][:4] + "..."
             
+        # Calculate Opportunity Score (V4.0)
+        # Higher instability + higher velocity = higher opportunity score
+        # Normalize to 0-100 range for better UX
+        score = 0.0
+        if instability > 0 and velocity > 0:
+            # Combine instability and velocity with weights
+            # Instability is more important for early detection
+            score = (instability * 0.7) + (velocity * 0.3)
+            # Cap the score to avoid extreme values
+            score = min(score, 100.0)
+        
         data.append({
             "address": r["address"],
             "symbol": display_symbol,
@@ -402,6 +483,7 @@ async def api_analytics():
             "marketcap": mcap,
             "volume_5m": vol,
             "velocity": velocity,
+            "score": round(score, 2),
             "timestamp": r["timestamp"]
         })
     

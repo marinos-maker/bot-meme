@@ -47,12 +47,12 @@ async def upsert_token(address: str, name: str | None = None,
         VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (address) DO UPDATE SET 
             name = CASE 
-                WHEN tokens.name IS NULL OR tokens.name = 'Unknown' OR tokens.name = '' 
+                WHEN tokens.name IS NULL OR tokens.name = 'Unknown' OR tokens.name = '' OR tokens.name LIKE 'Token #%'
                 THEN COALESCE(NULLIF($2, 'Unknown'), tokens.name)
                 ELSE tokens.name 
             END,
             symbol = CASE 
-                WHEN tokens.symbol IS NULL OR tokens.symbol = '???' OR tokens.symbol = '' 
+                WHEN tokens.symbol IS NULL OR tokens.symbol = '???' OR tokens.symbol = '' OR tokens.symbol LIKE 'TOK%'
                 THEN COALESCE(NULLIF($3, '???'), tokens.symbol)
                 ELSE tokens.symbol 
             END,

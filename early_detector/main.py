@@ -232,16 +232,21 @@ async def process_token_to_features(session, tok) -> dict | None:
         m_name = (metrics.get("name") or metrics.get("dex_name"))
         m_symbol = (metrics.get("symbol") or metrics.get("dex_symbol"))
         
-        if m_name and (not name or name == "Unknown" or name == "???"): 
+        logger.debug(f"process_token_to_features for {address[:8]}: original name={name}, symbol={symbol}, metrics name={m_name}, symbol={m_symbol}")
+        
+        if m_name and (not name or name == "Unknown" or name == "???" or name.startswith("Token #")): 
             name = m_name
-        if m_symbol and (not symbol or symbol == "???" or symbol == "Unknown"): 
+            logger.debug(f"Updated name to: {name}")
+        if m_symbol and (not symbol or symbol == "???" or symbol == "Unknown" or symbol.startswith("TOK")): 
             symbol = m_symbol
+            logger.debug(f"Updated symbol to: {symbol}")
 
         # Re-classify narrative with new info
         narrative = NarrativeManager.classify(name or "", symbol or "")
             
         # Re-upsert with potentially better name/symbol and narrative
         token_id = await upsert_token(address, name, symbol, narrative=narrative)
+        logger.debug(f"upsert_token called for {address[:8]} with name={name}, symbol={symbol}")
         
         # History
         history = await get_recent_metrics(token_id, minutes=30)
@@ -346,8 +351,8 @@ async def process_token_to_features(session, tok) -> dict | None:
 
         features["token_id"] = token_id
         features["address"] = address
-        features["name"] = tok.get("name", "Unknown")
-        features["symbol"] = tok.get("symbol", "???")
+        features["name"] = name
+        features["symbol"] = symbol
         features["price"] = current_price
         features["price_change_5m"] = price_change_5m
         features["liquidity"] = metrics.get("liquidity") or 0

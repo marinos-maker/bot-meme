@@ -148,6 +148,9 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
         if field not in metrics:
             metrics[field] = None if field in ["mint_authority", "freeze_authority"] else 0.0
 
+    # Add logging to debug the metrics being returned
+    logger.debug(f"fetch_token_metrics for {token_address[:8]}: name={metrics.get('name')}, symbol={metrics.get('symbol')}, price={metrics.get('price')}, liquidity={metrics.get('liquidity')}")
+
     return metrics
 
 
