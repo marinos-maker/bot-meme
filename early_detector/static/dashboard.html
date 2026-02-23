@@ -1302,7 +1302,13 @@
             <div class="table-container">
                 <div class="table-header">
                     <div class="table-title">⚡ Detected Signals</div>
-                    <div class="last-update" id="signalsCount">—</div>
+                    <div style="display:flex; gap:12px; align-items:center;">
+                        <div class="last-update" id="signalsCount">—</div>
+                        <button class="refresh-btn" id="refreshSignalsBtn" onclick="refreshSignalsRecent()" style="padding:6px 12px; font-size:12px;">
+                            🔄 Refresh Recent
+                        </button>
+                        <div class="last-update" id="signalsLastUpdate">Last update: —</div>
+                    </div>
                 </div>
                 <div id="signalsContent">
                     <table>
@@ -1772,7 +1778,7 @@
                 const isBuyable = s.confidence >= 0.70 || (s.instability_index > 1000 && s.confidence > 0.60);
                 return `
                 <tr class="${isBuyable ? 'row-buyable' : ''}" data-search="${s.token_address} ${displayName}" 
-                    style="cursor:pointer" onclick="if(!event.target.closest('button') && !event.target.closest('svg')) showAiModal(${JSON.stringify(s).replace(/"/g, '&quot;')})">
+                    style="cursor:pointer" onclick="if(!event.target.closest('button') && !event.target.closest('svg')) showAiModal(${JSON.stringify(s).replace(/"/g, '"')})">
                     <td>
                         <div class="token-info">
                             <span class="token-name">${displayName}</span>
@@ -1787,7 +1793,7 @@
                     </td>
                     <td><span class="score-badge ${getScoreClass(s.instability_index)}">${s.instability_index.toFixed(3)}</span></td>
                     <td>
-                        <div style="cursor:pointer; display:flex; flex-direction:column; align-items:center;" onclick="showAiModal(${JSON.stringify(s).replace(/"/g, '&quot;')})">
+                        <div style="cursor:pointer; display:flex; flex-direction:column; align-items:center;" onclick="showAiModal(${JSON.stringify(s).replace(/"/g, '"')})">
                             <div class="verdict-tag v-${s.ai_analysis?.verdict || 'WAIT'}" style="font-size:10px; padding:2px 6px; margin-bottom:4px; border-radius:4px;">
                                 ${s.ai_analysis?.verdict || 'WAIT'}
                             </div>
@@ -1821,6 +1827,114 @@
                     </td>
                 </tr>
             `}).join('');
+        }
+
+        async function refreshSignalsRecent() {
+            const btn = document.getElementById('refreshSignalsBtn');
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Refreshing...';
+
+            try {
+                const data = await fetchAPI('/api/signals/recent?minutes=10');
+                if (!data) {
+                    showToast('Failed to load recent signals', 'error');
+                    return;
+                }
+
+                const tbody = document.getElementById('signalsTable');
+
+                // Filter data if showTopOnly is true
+                let filteredSignals = data.signals;
+                if (showTopOnly) {
+                    filteredSignals = data.signals.filter(s => (s.degen_score >= 50 || s.instability_index > 1.5));
+                }
+
+                document.getElementById('signalsCount').textContent =
+                    `${filteredSignals.length} signal(s) ${showTopOnly ? '(Top Rated)' : ''} (Last 10 min)`;
+
+                if (filteredSignals.length === 0) {
+                    tbody.innerHTML = `
+                    <tr><td colspan="12">
+                        <div class="empty-state">
+                            <div class="icon">🔍</div>
+                            <h3>No recent signals</h3>
+                            <p>No signals generated in the last 10 minutes.</p>
+                        </div>
+                    </td></tr>`;
+                    return;
+                }
+
+                // Update Top Picks in Overview
+                const topSignals = data.signals.filter(s => (s.degen_score >= 50 || s.instability_index > 1.5));
+                renderTopPicks(topSignals);
+
+                tbody.innerHTML = filteredSignals.map(s => {
+                    const displayName = s.token_symbol === "???" ? s.token_address.slice(0, 4) : s.token_symbol;
+                    // V4.5: More restrictive highlighting (only top 20% of signals)
+                    const isBuyable = s.confidence >= 0.70 || (s.instability_index > 1000 && s.confidence > 0.60);
+                    return `
+                    <tr class="${isBuyable ? 'row-buyable' : ''}" data-search="${s.token_address} ${displayName}" 
+                        style="cursor:pointer" onclick="if(!event.target.closest('button') && !event.target.closest('svg')) showAiModal(${JSON.stringify(s).replace(/"/g, '"')})">
+                        <td>
+                            <div class="token-info">
+                                <span class="token-name">${displayName}</span>
+                                <span class="token-address">
+                                    ${s.token_address.slice(0, 6)}…
+                                    <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="copyToClipboard('${s.token_address}')">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                    </svg>
+                                </span>
+                            </div>
+                        </td>
+                        <td><span class="score-badge ${getScoreClass(s.instability_index)}">${s.instability_index.toFixed(3)}</span></td>
+                        <td>
+                            <div style="cursor:pointer; display:flex; flex-direction:column; align-items:center;" onclick="showAiModal(${JSON.stringify(s).replace(/"/g, '"')})">
+                                <div class="verdict-tag v-${s.ai_analysis?.verdict || 'WAIT'}" style="font-size:10px; padding:2px 6px; margin-bottom:4px; border-radius:4px;">
+                                    ${s.ai_analysis?.verdict || 'WAIT'}
+                                </div>
+                                <div style="font-weight:800; color:${s.degen_score > 70 ? 'var(--green)' : s.degen_score > 40 ? 'var(--yellow)' : 'var(--red)'}; font-size:16px; line-height:1;">
+                                    ${s.degen_score || '??'}
+                                </div>
+                            </div>
+                        </td>
+                        <td class="mono">
+                            <div>$${formatNum(s.entry_price)}</div>
+                            <div style="font-size:10px; color:var(--text-muted)">
+                                ${solPriceUsd > 0 ? (s.entry_price / solPriceUsd).toFixed(9) + ' SOL' : '—'}
+                            </div>
+                        </td>
+                        <td class="mono">$${formatNum(s.liquidity)}</td>
+                        <td class="mono">$${formatNum(s.marketcap)}</td>
+                        <td class="mono" style="color:${s.insider_psi > 0.5 ? 'var(--red)' : 'var(--text-secondary)'}">${(s.insider_psi).toFixed(2)}</td>
+                        <td class="mono" style="color:var(--accent)">${(s.top10_ratio || 0).toFixed(1)}%</td>
+                        <td class="mono" style="color:var(--green)">${(s.confidence * 100).toFixed(0)}%</td>
+                        <td class="mono" style="color:var(--accent)">${(s.kelly_size * 100).toFixed(1)}%</td>
+                        <td class="last-update">${formatTime(s.timestamp)}</td>
+                        <td>
+                            <div style="display:flex;gap:4px;">
+                                <button class="buy-btn" onclick="openTradeModal('${s.token_address}', '${displayName}')">
+                                    🟢 BUY
+                                </button>
+                                <button class="buy-btn" style="background:var(--red);" onclick="executeQuickSell('${s.token_address}', '${displayName}')">
+                                    🔴 SELL
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `}).join('');
+
+                // Update last update time
+                document.getElementById('signalsLastUpdate').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+                showToast('Recent signals loaded', 'success');
+            } catch (e) {
+                console.error('Error refreshing signals:', e);
+                showToast('Error refreshing signals', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
         }
 
         async function loadTokens() {
