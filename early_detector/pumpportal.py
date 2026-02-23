@@ -17,12 +17,14 @@ async def pumpportal_worker(token_queue: asyncio.Queue, smart_wallets: list[str]
     
     while True:
         try:
-            # V4.6: Increased stability with keepalive settings
+            # V4.6: Enhanced stability with optimized keepalive settings
             async with websockets.connect(
                 uri, 
-                ping_interval=20,      # Ping more frequently (every 20s)
-                ping_timeout=20,       # Wait longer for pong (20s)
-                close_timeout=5
+                ping_interval=30,      # Ping every 30s (less frequent to reduce load)
+                ping_timeout=10,       # Wait 10s for pong (more responsive to timeouts)
+                close_timeout=5,
+                max_size=2**20,        # 1MB max message size
+                max_queue=1000         # Limit message queue size
             ) as websocket:
                 logger.info("🔌 Connected to PumpPortal Websocket")
                 
@@ -152,8 +154,14 @@ async def pumpportal_worker(token_queue: asyncio.Queue, smart_wallets: list[str]
                                 
                     except asyncio.TimeoutError:
                         continue 
-                    except (websockets.ConnectionClosed, websockets.ConnectionClosedError) as e:
-                        logger.warning(f"⚠️ PumpPortal connection lost in recv: {e}")
+                    except websockets.ConnectionClosedError as e:
+                        if e.code == 1011:  # Internal Error
+                            logger.warning(f"⚠️ PumpPortal connection lost (Internal Error 1011): {e}. This may indicate server overload.")
+                        else:
+                            logger.warning(f"⚠️ PumpPortal connection lost (Code {e.code}): {e}")
+                        break
+                    except websockets.ConnectionClosed as e:
+                        logger.warning(f"⚠️ PumpPortal connection closed: {e}")
                         break
                     except json.JSONDecodeError: 
                         continue
@@ -164,4 +172,6 @@ async def pumpportal_worker(token_queue: asyncio.Queue, smart_wallets: list[str]
         except Exception as e:
             logger.warning(f"PumpPortal Websocket disconnected: {e}. Retrying in {retry_delay}s...")
             await asyncio.sleep(retry_delay)
-            retry_delay = min(retry_delay * 2, 60)
+            # Implement jitter to avoid thundering herd on server restart
+            jitter = asyncio.get_event_loop().time() % 5
+            retry_delay = min(retry_delay * 1.5, 120) + jitter

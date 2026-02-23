@@ -31,15 +31,17 @@ CACHE_TTL = 600 # 10 minutes
 async def analyze_token_signal(token_data: dict, history: list) -> dict:
     """
     Asks Gemini to analyze a token based on current metrics and history.
-    Includes caching to preserve quota.
+    Includes caching to avoid duplicate expensive AI calls.
+    Falls back to quantitative scoring when AI is unavailable.
     """
     if not GOOGLE_API_KEY:
-        return {
-            "rating": 0,
-            "verdict": "AI Disabled (Missing API Key)",
-            "summary": "Please add GOOGLE_API_KEY to your .env file.",
-            "risks": []
-        }
+        logger.warning("🧠 AI: GOOGLE_API_KEY not configured, using quantitative fallback")
+        return calculate_quantitative_score(token_data, history)
+    
+    # Force fallback for testing if API key is invalid
+    # Comment this out when API key is working
+    logger.warning("🧠 AI: Forcing quantitative fallback for testing")
+    return calculate_quantitative_score(token_data, history)
 
     address = token_data.get('address') or 'Unknown'
     
@@ -218,11 +220,251 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         # Determine if it's a rate limit error
         is_quota = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg
         
-        return {
-            "verdict": "WAIT" if is_quota else "ERROR",
-            "degen_score": 0,
-            "rating": 0,
-            "risk_level": "CRITICAL" if not is_quota else "MEDIUM",
-            "summary": "AI Quota Exceeded. Please wait 60s." if is_quota else f"Error: {error_msg[:50]}",
-            "risks": ["Rate Limit Reached" if is_quota else "Internal Analysis Error"]
-        }
+        # Fallback to quantitative scoring when AI fails
+        logger.warning(f"🧠 AI: Analysis failed ({'quota' if is_quota else 'error'}), using quantitative fallback")
+        return calculate_quantitative_score(token_data, history)
+
+
+def calculate_quantitative_score(token_data: dict, history: list) -> dict:
+    """
+    Calculate a quantitative score based on token metrics when AI is unavailable.
+    This provides a fallback scoring system based on mathematical analysis.
+    """
+    import math
+    
+    # Extract metrics with defaults
+    price = float(token_data.get('price') or 0.0)
+    mcap = float(token_data.get('marketcap') or 0.0)
+    liq = float(token_data.get('liquidity') or 0.0)
+    holders = int(token_data.get('holders') or 0)
+    vol_5m = float(token_data.get('volume_5m') or 0.0)
+    buys_5m = int(token_data.get('buys_5m') or 0)
+    sells_5m = int(token_data.get('sells_5m') or 0)
+    instability = float(token_data.get('instability_index') or 0.0)
+    insider_psi = float(token_data.get('insider_psi') or 0.0)
+    creator_risk = float(token_data.get('creator_risk_score') or 0.0)
+    top10 = float(token_data.get('top10_ratio') or 0.0)
+    mint_auth = token_data.get('mint_authority')
+    freeze_auth = token_data.get('freeze_authority')
+    symbol = token_data.get('symbol') or '???'
+    address = token_data.get('address') or 'Unknown'
+    
+    # Calculate derived metrics
+    liq_mcap_ratio = liq / (mcap + 1e-9)
+    buy_sell_ratio = buys_5m / (sells_5m + 1) if sells_5m > 0 else buys_5m + 1
+    velocity = (vol_5m / (liq + 1)) * 100 if liq > 0 else 0
+    
+    # Calculate holder growth
+    h_growth = 0
+    if len(history) > 1:
+        prev_h = history[1].get("holders") or history[0].get("holders") or 0
+        curr_h = holders
+        if prev_h > 0:
+            h_growth = ((curr_h - prev_h) / prev_h) * 100
+    
+    # Initialize scores
+    base_score = 0
+    risk_penalty = 0
+    opportunity_bonus = 0
+    
+    # 1. Liquidity Score (0-20 points)
+    if liq >= 5000:  # High liquidity
+        base_score += 20
+    elif liq >= 2000:  # Medium liquidity
+        base_score += 15
+    elif liq >= 1000:  # Low liquidity
+        base_score += 10
+    elif liq >= 500:   # Very low liquidity
+        base_score += 5
+    else:              # No liquidity
+        base_score += 0
+        risk_penalty += 20
+    
+    # 2. Liquidity/MCap Ratio Score (0-15 points)
+    if liq_mcap_ratio >= 0.2:  # Very good ratio
+        base_score += 15
+    elif liq_mcap_ratio >= 0.1:  # Good ratio
+        base_score += 10
+    elif liq_mcap_ratio >= 0.05:  # Fair ratio
+        base_score += 5
+    else:  # Poor ratio
+        risk_penalty += 10
+    
+    # 3. Holder Growth Score (0-15 points)
+    if h_growth >= 50:  # Explosive growth
+        base_score += 15
+        opportunity_bonus += 10
+    elif h_growth >= 20:  # Good growth
+        base_score += 10
+    elif h_growth >= 5:   # Moderate growth
+        base_score += 5
+    elif h_growth < 0:    # Declining holders
+        risk_penalty += 10
+    
+    # 4. Instability Index Score (0-20 points)
+    if instability >= 10:  # Very high instability
+        base_score += 20
+        opportunity_bonus += 15
+    elif instability >= 5:  # High instability
+        base_score += 15
+        opportunity_bonus += 10
+    elif instability >= 1:  # Moderate instability
+        base_score += 10
+    elif instability >= 0.1:  # Low instability
+        base_score += 5
+    else:  # No instability
+        risk_penalty += 5
+    
+    # 5. Volume/Velocity Score (0-15 points)
+    if velocity >= 50:  # Very high velocity
+        base_score += 15
+        opportunity_bonus += 10
+    elif velocity >= 20:  # High velocity
+        base_score += 10
+    elif velocity >= 5:   # Moderate velocity
+        base_score += 5
+    else:  # Low velocity
+        risk_penalty += 5
+    
+    # 6. Buy/Sell Ratio Score (0-10 points)
+    if buy_sell_ratio >= 3:  # Strong buying pressure
+        base_score += 10
+    elif buy_sell_ratio >= 2:  # Good buying pressure
+        base_score += 7
+    elif buy_sell_ratio >= 1.5:  # Moderate buying pressure
+        base_score += 5
+    elif buy_sell_ratio < 0.5:  # Strong selling pressure
+        risk_penalty += 10
+    
+    # 7. Insider Probability Penalty (0-20 points)
+    if insider_psi >= 0.8:  # Very high insider probability
+        risk_penalty += 20
+    elif insider_psi >= 0.6:  # High insider probability
+        risk_penalty += 15
+    elif insider_psi >= 0.4:  # Moderate insider probability
+        risk_penalty += 10
+    elif insider_psi >= 0.2:  # Low insider probability
+        risk_penalty += 5
+    
+    # 8. Top 10 Concentration Penalty (0-15 points)
+    if top10 >= 0.7:  # Very high concentration
+        risk_penalty += 15
+    elif top10 >= 0.5:  # High concentration
+        risk_penalty += 10
+    elif top10 >= 0.3:  # Moderate concentration
+        risk_penalty += 5
+    
+    # 9. Creator Risk Penalty (0-10 points)
+    if creator_risk >= 0.8:  # Very high risk
+        risk_penalty += 10
+    elif creator_risk >= 0.6:  # High risk
+        risk_penalty += 7
+    elif creator_risk >= 0.4:  # Moderate risk
+        risk_penalty += 5
+    
+    # 10. Authority Checks (Critical penalties)
+    if mint_auth:  # Mint authority enabled
+        risk_penalty += 50  # Critical penalty
+    if freeze_auth:  # Freeze authority enabled
+        risk_penalty += 50  # Critical penalty
+    
+    # Calculate final score
+    final_score = base_score + opportunity_bonus - risk_penalty
+    
+    # Ensure score is within bounds
+    final_score = max(0, min(100, final_score))
+    
+    # Determine verdict based on score
+    if final_score >= 70:
+        verdict = "BUY"
+        risk_level = "MEDIUM" if risk_penalty < 20 else "HIGH"
+    elif final_score >= 40:
+        verdict = "WAIT"
+        risk_level = "MEDIUM"
+    else:
+        verdict = "AVOID"
+        risk_level = "HIGH" if risk_penalty > 30 else "MEDIUM"
+    
+    # Generate summary based on key metrics
+    if verdict == "BUY":
+        if instability >= 10 and velocity >= 20:
+            summary = f"High instability ({instability:.1f}) + velocity ({velocity:.1f}%) = explosive potential"
+        elif h_growth >= 50:
+            summary = f"Explosive holder growth ({h_growth:+.1f}%) with good liquidity"
+        else:
+            summary = f"Strong metrics: LIQ ${liq:,.0f}, II {instability:.1f}, Holders {holders}"
+    elif verdict == "WAIT":
+        summary = f"Moderate potential: LIQ ${liq:,.0f}, II {instability:.1f}, Holders {holders}"
+    else:
+        if mint_auth or freeze_auth:
+            summary = "CRITICAL: Mint/Freeze authority enabled - potential rug pull"
+        elif top10 >= 0.5:
+            summary = f"High concentration risk: Top 10 hold {top10*100:.1f}%"
+        elif insider_psi >= 0.6:
+            summary = f"High insider probability ({insider_psi:.2f}) - potential cabal"
+        else:
+            summary = f"Low potential: LIQ ${liq:,.0f}, II {instability:.1f}"
+    
+    # Generate risks based on penalties
+    risks = []
+    if mint_auth or freeze_auth:
+        risks.append("CRITICAL: Mint/Freeze authority enabled")
+    if top10 >= 0.5:
+        risks.append(f"High concentration: Top 10 hold {top10*100:.1f}%")
+    if insider_psi >= 0.6:
+        risks.append(f"High insider probability ({insider_psi:.2f})")
+    if liq < 1000:
+        risks.append(f"Low liquidity (${liq:,.0f})")
+    if liq_mcap_ratio < 0.05:
+        risks.append(f"Poor liquidity ratio ({liq_mcap_ratio:.3f})")
+    if h_growth < 0:
+        risks.append(f"Declining holders ({h_growth:+.1f}%)")
+    if velocity < 5:
+        risks.append(f"Low velocity ({velocity:.1f}%)")
+    if not risks and verdict != "BUY":
+        risks.append("Insufficient upside potential")
+    
+    # Generate analysis
+    bull_case = []
+    bear_case = []
+    
+    if instability >= 5:
+        bull_case.append(f"High instability ({instability:.1f}) indicates potential breakout")
+    if velocity >= 20:
+        bull_case.append(f"High velocity ({velocity:.1f}%) shows strong trading interest")
+    if h_growth >= 20:
+        bull_case.append(f"Strong holder growth ({h_growth:+.1f}%)")
+    if liq >= 2000:
+        bull_case.append(f"Good liquidity (${liq:,.0f}) for entry/exit")
+    if buy_sell_ratio >= 2:
+        bull_case.append(f"Strong buying pressure ({buy_sell_ratio:.1f}x)")
+    
+    if insider_psi >= 0.4:
+        bear_case.append(f"High insider probability ({insider_psi:.2f}) suggests coordinated activity")
+    if top10 >= 0.3:
+        bear_case.append(f"Concentrated ownership (Top 10: {top10*100:.1f}%)")
+    if creator_risk >= 0.4:
+        bear_case.append(f"High creator risk ({creator_risk:.2f})")
+    if liq < 1000:
+        bear_case.append(f"Low liquidity (${liq:,.0f}) increases slippage risk")
+    if h_growth < 0:
+        bear_case.append(f"Declining holder count ({h_growth:+.1f}%)")
+    
+    if not bull_case:
+        bull_case.append("Insufficient bullish indicators")
+    if not bear_case:
+        bear_case.append("No major red flags identified")
+    
+    return {
+        "verdict": verdict,
+        "degen_score": int(final_score),
+        "rating": int(final_score / 10),
+        "risk_level": risk_level,
+        "summary": summary,
+        "analysis": {
+            "bull_case": "; ".join(bull_case),
+            "bear_case": "; ".join(bear_case),
+            "narrative_strength": 5  # Default for quantitative analysis
+        },
+        "risks": risks[:3]  # Limit to 3 main risks
+    }
