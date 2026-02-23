@@ -444,8 +444,7 @@
         table {
             width: 100%;
             border-collapse: collapse;
-            table-layout: fixed;
-            /* Force fixed layout for alignment */
+            table-layout: auto;
         }
 
         th {
@@ -458,74 +457,10 @@
             letter-spacing: 0.5px;
             border-bottom: 1px solid var(--border);
             background: rgba(0, 0, 0, 0.2);
+            white-space: nowrap;
         }
 
-        /* Column Widths (Mixed tables) */
-        th:nth-child(1),
-        td:nth-child(1) {
-            width: 140px;
-        }
-
-        th:nth-child(2),
-        td:nth-child(2) {
-            width: 100px;
-        }
-
-        th:nth-child(3),
-        td:nth-child(3) {
-            width: 110px;
-            /* Wider for dual price (USD/SOL) */
-        }
-
-        th:nth-child(4),
-        td:nth-child(4) {
-            width: 110px;
-        }
-
-        /* MCAP */
-        th:nth-child(5),
-        td:nth-child(5) {
-            width: 90px;
-        }
-
-        /* Liq */
-        th:nth-child(6),
-        td:nth-child(6) {
-            width: 80px;
-        }
-
-        /* Holders */
-        th:nth-child(7),
-        td:nth-child(7) {
-            width: 90px;
-        }
-
-        /* Vol */
-        th:nth-child(8),
-        td:nth-child(8) {
-            width: 80px;
-        }
-
-        /* B/S */
-        th:nth-child(9),
-        td:nth-child(9) {
-            width: 80px;
-        }
-
-        /* II */
-        th:nth-child(10),
-        td:nth-child(10) {
-            width: 100px;
-        }
-
-        /* Analyst */
-        th:nth-child(11),
-        td:nth-child(11) {
-            width: 90px;
-        }
-
-        /* Action */
-
+        
         td {
             padding: 12px 16px;
             font-size: 13px;
@@ -820,12 +755,26 @@
         }
 
         .row-buyable {
-            background: rgba(16, 185, 129, 0.1) !important;
+            background: rgba(16, 185, 129, 0.15) !important;
             box-shadow: inset 4px 0 0 var(--green);
         }
-
         .row-buyable:hover {
-            background: rgba(16, 185, 129, 0.15) !important;
+            background: rgba(16, 185, 129, 0.25) !important;
+        }
+        .hot-badge {
+            background: var(--gradient-3);
+            color: white;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 800;
+            margin-left: 8px;
+            animation: pulse-hot 2s infinite;
+        }
+        @keyframes pulse-hot {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            70% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
         }
 
         .toast.error {
@@ -1226,7 +1175,7 @@
         <div class="tabs">
             <button class="tab active" onclick="switchTab('overview')">📊 Overview</button>
             <button class="tab" onclick="switchTab('signals')">⚡ Signals</button>
-            <button class="tab" onclick="switchTab('positions')">💰 Posizioni</button>
+            <button class="tab" onclick="switchTab('positions')">💰 Positions</button>
             <button class="tab" onclick="switchTab('tokens')">🪙 Tokens</button>
             <button class="tab" onclick="switchTab('wallets')">👛 Wallets</button>
             <button class="tab" onclick="switchTab('actions')">⚙️ Actions</button>
@@ -1315,15 +1264,11 @@
                         <thead>
                             <tr>
                                 <th>Token</th>
-                                <th>Instability</th>
-                                <th>AI Degen</th>
+                                <th>Scores (II / Degen)</th>
                                 <th>Price</th>
-                                <th>Liquidity</th>
-                                <th>Market Cap</th>
-                                <th>Insider</th>
-                                <th>Top 10</th>
-                                <th>Win P</th>
-                                <th>Size</th>
+                                <th>Market (Liq / Mcap)</th>
+                                <th>Risk (Ins. PSI / Top10)</th>
+                                <th>Sizing (Win / Size)</th>
                                 <th>Time</th>
                                 <th>Action</th>
                             </tr>
@@ -1400,16 +1345,11 @@
                         <thead>
                             <tr>
                                 <th>Token</th>
-                                <th>Narrative</th>
-                                <th>AI Degen</th>
+                                <th>Scores (II / AI)</th>
                                 <th>Price</th>
-                                <th>Market Cap</th>
-                                <th>Liquidity</th>
-                                <th>Holders</th>
-                                <th>Top 10</th>
-                                <th>Vol 5m</th>
-                                <th>B/S 5m</th>
-                                <th>II Score</th>
+                                <th>Market (Liq / Mcap)</th>
+                                <th>Activity (Vol 5m / B/S)</th>
+                                <th>Holders (Tot / Top10)</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
@@ -1694,6 +1634,67 @@
         }
 
         // ── Data Loading ───────────────────────────────────────────────────────────
+
+        function renderSignalRow(s) {
+            const displayName = s.token_symbol === "???" ? s.token_address.slice(0, 4) : s.token_symbol;
+            // Enhanced buy logic
+            const isBuyable = s.confidence >= 0.70 || (s.instability_index > 1000 && s.confidence > 0.60) || s.degen_score > 70;
+            const hotBadge = isBuyable ? '<span class="hot-badge">🔥 HOT</span>' : '';
+            return `
+            <tr class="${isBuyable ? 'row-buyable' : ''}" data-search="${s.token_address} ${displayName}" 
+                style="cursor:pointer" onclick="if(!event.target.closest('button') && !event.target.closest('svg')) showAiModal(${JSON.stringify(s).replace(/"/g, '&quot;')})">
+                <td>
+                    <div class="token-info">
+                        <div style="display:flex; align-items:center;">
+                            <span class="token-name" style="font-size:15px; font-weight:700; color:var(--text-primary);">${displayName}</span>
+                            ${hotBadge}
+                        </div>
+                        <span class="token-address" style="margin-top:2px;">
+                            ${s.token_address.slice(0, 6)}…
+                            <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="copyToClipboard('${s.token_address}')">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                        </span>
+                    </div>
+                </td>
+                <td>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <span class="score-badge ${getScoreClass(s.instability_index)}" style="font-size:11px;">II: ${s.instability_index.toFixed(2)}</span>
+                        <div style="font-weight:800; color:${s.degen_score > 70 ? 'var(--green)' : s.degen_score > 40 ? 'var(--yellow)' : 'var(--red)'}; font-size:14px; background:rgba(255,255,255,0.05); padding:2px 6px; border-radius:4px;">
+                            Degen: ${s.degen_score || '??'}
+                        </div>
+                    </div>
+                </td>
+                <td class="mono">
+                    <div style="font-weight:600; color:var(--text-primary);">$${formatNum(s.entry_price)}</div>
+                    <div style="font-size:10px; color:var(--text-muted)">
+                        ${solPriceUsd > 0 ? (s.entry_price / solPriceUsd).toFixed(9) + ' SOL' : '—'}
+                    </div>
+                </td>
+                <td class="mono">
+                    <div style="color:var(--text-primary); margin-bottom:2px;">$${formatNum(s.liquidity)} <span style="font-size:10px;color:var(--text-muted)">Liq</span></div>
+                    <div style="color:var(--text-secondary)">$${formatNum(s.marketcap)} <span style="font-size:10px;color:var(--text-muted)">MCap</span></div>
+                </td>
+                <td class="mono">
+                    <div style="color:${s.insider_psi > 0.5 ? 'var(--red)' : 'var(--text-secondary)'}; margin-bottom:2px;">${(s.insider_psi).toFixed(2)} <span style="font-size:10px;color:var(--text-muted)">Ins. PSI</span></div>
+                    <div style="color:var(--yellow)">${(s.top10_ratio || 0).toFixed(1)}% <span style="font-size:10px;color:var(--text-muted)">Top10</span></div>
+                </td>
+                <td class="mono">
+                    <div style="color:var(--green); margin-bottom:2px;">${(s.confidence * 100).toFixed(0)}% <span style="font-size:10px;color:var(--text-muted)">Win</span></div>
+                    <div style="color:var(--accent)">${(s.kelly_size * 100).toFixed(1)}% <span style="font-size:10px;color:var(--text-muted)">Size</span></div>
+                </td>
+                <td class="last-update">${formatTime(s.timestamp)}</td>
+                <td>
+                    <div style="display:flex;gap:4px;flex-direction:column;">
+                        <button class="buy-btn" onclick="openTradeModal('${s.token_address}', '${displayName}')">🟢 BUY</button>
+                        <button class="buy-btn" style="background:var(--red);font-size:10px;padding:4px 8px;" onclick="executeQuickSell('${s.token_address}', '${displayName}')">🔴 SELL</button>
+                    </div>
+                </td>
+            </tr>
+            `;
+        }
+
         async function fetchAPI(endpoint) {
             try {
                 const resp = await fetch(endpoint);
@@ -1772,61 +1773,7 @@
             const topSignals = data.signals.filter(s => (s.degen_score >= 50 || s.instability_index > 1.5));
             renderTopPicks(topSignals);
 
-            tbody.innerHTML = filteredSignals.map(s => {
-                const displayName = s.token_symbol === "???" ? s.token_address.slice(0, 4) : s.token_symbol;
-                // V4.5: More restrictive highlighting (only top 20% of signals)
-                const isBuyable = s.confidence >= 0.70 || (s.instability_index > 1000 && s.confidence > 0.60);
-                return `
-                <tr class="${isBuyable ? 'row-buyable' : ''}" data-search="${s.token_address} ${displayName}" 
-                    style="cursor:pointer" onclick="if(!event.target.closest('button') && !event.target.closest('svg')) showAiModal(${JSON.stringify(s).replace(/"/g, '"')})">
-                    <td>
-                        <div class="token-info">
-                            <span class="token-name">${displayName}</span>
-                            <span class="token-address">
-                                ${s.token_address.slice(0, 6)}…
-                                <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="copyToClipboard('${s.token_address}')">
-                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                                </svg>
-                            </span>
-                        </div>
-                    </td>
-                    <td><span class="score-badge ${getScoreClass(s.instability_index)}">${s.instability_index.toFixed(3)}</span></td>
-                    <td>
-                        <div style="cursor:pointer; display:flex; flex-direction:column; align-items:center;" onclick="showAiModal(${JSON.stringify(s).replace(/"/g, '"')})">
-                            <div class="verdict-tag v-${s.ai_analysis?.verdict || 'WAIT'}" style="font-size:10px; padding:2px 6px; margin-bottom:4px; border-radius:4px;">
-                                ${s.ai_analysis?.verdict || 'WAIT'}
-                            </div>
-                            <div style="font-weight:800; color:${s.degen_score > 70 ? 'var(--green)' : s.degen_score > 40 ? 'var(--yellow)' : 'var(--red)'}; font-size:16px; line-height:1;">
-                                ${s.degen_score || '??'}
-                            </div>
-                        </div>
-                    </td>
-                    <td class="mono">
-                        <div>$${formatNum(s.entry_price)}</div>
-                        <div style="font-size:10px; color:var(--text-muted)">
-                            ${solPriceUsd > 0 ? (s.entry_price / solPriceUsd).toFixed(9) + ' SOL' : '—'}
-                        </div>
-                    </td>
-                    <td class="mono">$${formatNum(s.liquidity)}</td>
-                    <td class="mono">$${formatNum(s.marketcap)}</td>
-                    <td class="mono" style="color:${s.insider_psi > 0.5 ? 'var(--red)' : 'var(--text-secondary)'}">${(s.insider_psi).toFixed(2)}</td>
-                    <td class="mono" style="color:var(--accent)">${(s.top10_ratio || 0).toFixed(1)}%</td>
-                    <td class="mono" style="color:var(--green)">${(s.confidence * 100).toFixed(0)}%</td>
-                    <td class="mono" style="color:var(--accent)">${(s.kelly_size * 100).toFixed(1)}%</td>
-                    <td class="last-update">${formatTime(s.timestamp)}</td>
-                    <td>
-                        <div style="display:flex;gap:4px;">
-                            <button class="buy-btn" onclick="openTradeModal('${s.token_address}', '${displayName}')">
-                                🟢 BUY
-                            </button>
-                            <button class="buy-btn" style="background:var(--red);" onclick="executeQuickSell('${s.token_address}', '${displayName}')">
-                                🔴 SELL
-                            </button>
-                        </div>
-                    </td>
-                </tr>
-            `}).join('');
+            tbody.innerHTML = filteredSignals.map(renderSignalRow).join('');
         }
 
         async function refreshSignalsRecent() {
@@ -1869,61 +1816,7 @@
                 const topSignals = data.signals.filter(s => (s.degen_score >= 50 || s.instability_index > 1.5));
                 renderTopPicks(topSignals);
 
-                tbody.innerHTML = filteredSignals.map(s => {
-                    const displayName = s.token_symbol === "???" ? s.token_address.slice(0, 4) : s.token_symbol;
-                    // V4.5: More restrictive highlighting (only top 20% of signals)
-                    const isBuyable = s.confidence >= 0.70 || (s.instability_index > 1000 && s.confidence > 0.60);
-                    return `
-                    <tr class="${isBuyable ? 'row-buyable' : ''}" data-search="${s.token_address} ${displayName}" 
-                        style="cursor:pointer" onclick="if(!event.target.closest('button') && !event.target.closest('svg')) showAiModal(${JSON.stringify(s).replace(/"/g, '"')})">
-                        <td>
-                            <div class="token-info">
-                                <span class="token-name">${displayName}</span>
-                                <span class="token-address">
-                                    ${s.token_address.slice(0, 6)}…
-                                    <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="copyToClipboard('${s.token_address}')">
-                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                                    </svg>
-                                </span>
-                            </div>
-                        </td>
-                        <td><span class="score-badge ${getScoreClass(s.instability_index)}">${s.instability_index.toFixed(3)}</span></td>
-                        <td>
-                            <div style="cursor:pointer; display:flex; flex-direction:column; align-items:center;" onclick="showAiModal(${JSON.stringify(s).replace(/"/g, '"')})">
-                                <div class="verdict-tag v-${s.ai_analysis?.verdict || 'WAIT'}" style="font-size:10px; padding:2px 6px; margin-bottom:4px; border-radius:4px;">
-                                    ${s.ai_analysis?.verdict || 'WAIT'}
-                                </div>
-                                <div style="font-weight:800; color:${s.degen_score > 70 ? 'var(--green)' : s.degen_score > 40 ? 'var(--yellow)' : 'var(--red)'}; font-size:16px; line-height:1;">
-                                    ${s.degen_score || '??'}
-                                </div>
-                            </div>
-                        </td>
-                        <td class="mono">
-                            <div>$${formatNum(s.entry_price)}</div>
-                            <div style="font-size:10px; color:var(--text-muted)">
-                                ${solPriceUsd > 0 ? (s.entry_price / solPriceUsd).toFixed(9) + ' SOL' : '—'}
-                            </div>
-                        </td>
-                        <td class="mono">$${formatNum(s.liquidity)}</td>
-                        <td class="mono">$${formatNum(s.marketcap)}</td>
-                        <td class="mono" style="color:${s.insider_psi > 0.5 ? 'var(--red)' : 'var(--text-secondary)'}">${(s.insider_psi).toFixed(2)}</td>
-                        <td class="mono" style="color:var(--accent)">${(s.top10_ratio || 0).toFixed(1)}%</td>
-                        <td class="mono" style="color:var(--green)">${(s.confidence * 100).toFixed(0)}%</td>
-                        <td class="mono" style="color:var(--accent)">${(s.kelly_size * 100).toFixed(1)}%</td>
-                        <td class="last-update">${formatTime(s.timestamp)}</td>
-                        <td>
-                            <div style="display:flex;gap:4px;">
-                                <button class="buy-btn" onclick="openTradeModal('${s.token_address}', '${displayName}')">
-                                    🟢 BUY
-                                </button>
-                                <button class="buy-btn" style="background:var(--red);" onclick="executeQuickSell('${s.token_address}', '${displayName}')">
-                                    🔴 SELL
-                                </button>
-                            </div>
-                        </td>
-                    </tr>
-                `}).join('');
+                tbody.innerHTML = filteredSignals.map(renderSignalRow).join('');
 
                 // Update last update time
                 document.getElementById('signalsLastUpdate').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
@@ -1957,60 +1850,61 @@
                 return;
             }
 
-            tbody.innerHTML = data.tokens.map(t => {
+                        tbody.innerHTML = data.tokens.map(t => {
                 const displayName = t.symbol === "???" ? t.address.slice(0, 4) : t.symbol;
-                // V4.5: High standards for non-signal tokens
                 const isBuyable = t.instability_index > 100.0 && t.liquidity > 5000 && t.marketcap < 1000000;
+                const hotBadge = isBuyable ? '<span class="hot-badge">🔥 HOT</span>' : '';
                 return `
                 <tr class="${isBuyable ? 'row-buyable' : ''}" data-search="${t.address} ${displayName}" 
                     style="cursor:pointer" onclick="if(!event.target.closest('button') && !event.target.closest('svg')) openAnalyst('${t.address}', '${displayName}')">
                     <td>
                         <div class="token-info">
-                            <span class="token-name">${displayName}</span>
-                            <span class="token-address">
-                                ${t.address.slice(0, 6)}…${t.address.slice(-3)}
+                            <div style="display:flex; align-items:center;">
+                                <span class="token-name" style="font-size:15px; font-weight:700; color:var(--text-primary);">${displayName}</span>
+                                ${hotBadge}
+                            </div>
+                            <span class="token-address" style="margin-top:2px;">
+                                ${t.address.slice(0, 6)}…
                                 <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" onclick="copyToClipboard('${t.address}')">
                                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                                 </svg>
                             </span>
+                            <div style="margin-top:4px;"><span class="narrative-tag narrative-${(t.narrative||'').toLowerCase()}">${t.narrative||'GENERIC'}</span></div>
                         </div>
                     </td>
                     <td>
-                        <span class="narrative-tag narrative-${t.narrative.toLowerCase()}">${t.narrative}</span>
-                    </td>
-                    <td>
-                        <div style="cursor:pointer;" onclick="openAnalyst('${t.address}', '${displayName}')">
-                            <div style="font-weight:800; color:'var(--text-muted)'; font-size:16px;">
-                                ??
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <span class="score-badge ${getScoreClass(t.instability_index)}" style="font-size:11px;">II: ${t.instability_index.toFixed(2)}</span>
+                            <div style="font-weight:800; color:var(--text-muted); font-size:14px; background:rgba(255,255,255,0.05); padding:2px 6px; border-radius:4px; cursor:pointer;" onclick="openAnalyst('${t.address}', '${displayName}')">
+                                🤖 AI
                             </div>
-                            <div style="font-size:9px; color:var(--text-muted); line-height:1;">Analyze</div>
                         </div>
                     </td>
                     <td class="mono">
-                        <div>$${formatNum(t.price)}</div>
+                        <div style="font-weight:600; color:var(--text-primary);">$${formatNum(t.price)}</div>
                         <div style="font-size:10px; color:var(--text-muted)">
                             ${solPriceUsd > 0 ? (t.price / solPriceUsd).toFixed(9) + ' SOL' : '—'}
                         </div>
                     </td>
-                    <td class="mono">$${formatNum(t.marketcap)}</td>
-                    <td class="mono">$${formatNum(t.liquidity)}</td>
-                    <td class="mono">${t.holders ? t.holders.toLocaleString() : '0'}</td>
-                    <td class="mono" style="color:var(--accent)">${(t.top10_ratio || 0).toFixed(1)}%</td>
-                    <td class="mono">$${formatNum(t.volume_5m)}</td>
-                    <td>
-                        <span class="positive">${t.buys_5m}</span> /
-                        <span class="negative">${t.sells_5m}</span>
+                    <td class="mono">
+                        <div style="color:var(--text-primary); margin-bottom:2px;">$${formatNum(t.liquidity)} <span style="font-size:10px;color:var(--text-muted)">Liq</span></div>
+                        <div style="color:var(--text-secondary)">$${formatNum(t.marketcap)} <span style="font-size:10px;color:var(--text-muted)">MCap</span></div>
                     </td>
-                    <td><span class="score-badge ${getScoreClass(t.instability_index)}">${t.instability_index.toFixed(2)}</span></td>
+                    <td class="mono">
+                        <div style="color:var(--text-primary); margin-bottom:2px;">$${formatNum(t.volume_5m)} <span style="font-size:10px;color:var(--text-muted)">Vol 5m</span></div>
+                        <div style="font-size:11px;">
+                            <span class="positive">${t.buys_5m} B</span> / <span class="negative">${t.sells_5m} S</span>
+                        </div>
+                    </td>
+                    <td class="mono">
+                        <div style="margin-bottom:2px;">${t.holders ? t.holders.toLocaleString() : '0'} <span style="font-size:10px;color:var(--text-muted)">Hold</span></div>
+                        <div style="color:var(--accent)">${(t.top10_ratio || 0).toFixed(1)}% <span style="font-size:10px;color:var(--text-muted)">Top10</span></div>
+                    </td>
                     <td>
-                        <div style="display:flex;gap:4px;">
-                            <button class="buy-btn" onclick="openTradeModal('${t.address}', '${displayName}')">
-                                🚀 Buy
-                            </button>
-                            <button class="buy-btn" style="background:var(--red);" onclick="executeQuickSell('${t.address}', '${displayName}')">
-                                🔴 Sell
-                            </button>
+                        <div style="display:flex;gap:4px;flex-direction:column;">
+                            <button class="buy-btn" onclick="openTradeModal('${t.address}', '${displayName}')">🟢 BUY</button>
+                            <button class="buy-btn" style="background:var(--red);font-size:10px;padding:4px 8px;" onclick="executeQuickSell('${t.address}', '${displayName}')">🔴 SELL</button>
                         </div>
                     </td>
                 </tr>
