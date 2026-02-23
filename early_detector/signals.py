@@ -21,9 +21,10 @@ def passes_trigger(token: dict, threshold: float) -> bool:
     """
     Check if a token meets ALL trigger conditions (V4.1 - More permissive):
     - II > dynamic threshold
-    - dII/dt > -0.5 (allow slight cooling or stability)
-    - price compression (vol_shift < 2.0)
+    - dII/dt > -1.0 (more permissive momentum)
+    - price compression (vol_shift < 3.0)
     - liquidity > LIQUIDITY_MIN
+    - NEW: Analyze first 5-6 candles for breakout patterns
     """
     ii = (token.get("instability") or 0.0)
     delta_ii = (token.get("delta_instability") or 0.0)
@@ -40,30 +41,28 @@ def passes_trigger(token: dict, threshold: float) -> bool:
     if ii == 0 and threshold == 0:
         return False
     
-    # 2. Condition: dII/dt > -0.5 (Permissive Momentum) 
-    # Catch tokens even if they are slightly stabilizing after a peak
-    if delta_ii < -0.5:
+    # 2. Condition: dII/dt > -1.0 (More permissive momentum)
+    # Catch tokens even if they are stabilizing after a peak
+    if delta_ii < -1.0:
         logger.info(f"Trigger rejected: Sharp falling instability (II={ii:.3f}, dII={delta_ii:.3f}) for {token.get('symbol')}")
         return False
         
-    # 3. Condition: Price Compression (vol_shift < 2.0)
+    # 3. Condition: Price Compression (vol_shift < 3.0)
     # Be more permissive with recent price action
-    if vol_shift >= 2.0 and ii < (threshold * 1.5):
+    if vol_shift >= 3.0 and ii < (threshold * 2.0):
         logger.info(f"Trigger rejected: Extreme Volatility expansion (vol_shift={vol_shift:.2f}) for {token.get('symbol')}")
         return False
     
-    # 4. Condition: Liquidity check
-    # V4.2 Exception: Allow low reported liquidity if II is high AND MCAP is reasonable
-    # (Matches new Pump tokens where DexScreener reports 0 liq temporarily)
+    # 4. Condition: Liquidity check (More flexible)
+    # Allow low reported liquidity if II is high AND MCAP is reasonable
     if liq < LIQUIDITY_MIN:
-        # CRITICAL V4.6: If liquidity is literally 0 or negative, REJECT immediately.
-        # $0 liquidity tokens are untradable or already rugged.
+        # CRITICAL: If liquidity is literally 0 or negative, REJECT immediately.
         if liq <= 0:
             logger.info(f"Trigger rejected: ZERO Liquidity for {token.get('symbol') or token.get('address')}")
             return False
 
-        # Relaxed exception: allow low liquidity (but > $100) if II is very high and it's a new small cap
-        if ii > (threshold * 2.0) and mcap < 150000 and liq >= 100:
+        # Relaxed exception: allow low liquidity (but > $50) if II is very high and it's a new small cap
+        if ii > (threshold * 2.5) and mcap < 200000 and liq >= 50:
             logger.info(f"Trigger exception: High II ({ii:.3f}) for new low-liquidity token {token.get('symbol') or token.get('address')} (Liq: {liq:.0f})")
         else:
             logger.info(f"Trigger rejected: Low Liquidity ({liq:.0f} < {LIQUIDITY_MIN}) for {token.get('symbol') or token.get('address')}")
@@ -73,7 +72,64 @@ def passes_trigger(token: dict, threshold: float) -> bool:
         logger.info(f"Trigger rejected: MarketCap too High ({mcap:.0f} > {MCAP_MAX}) for {token.get('symbol') or token.get('address')}")
         return False
 
+    # 5. NEW: First 5-6 Candles Analysis (Early Breakout Detection)
+    # Check if the token shows breakout patterns in the first few candles
+    if not passes_candle_analysis(token):
+        logger.info(f"Trigger rejected: Failed candle analysis for {token.get('symbol') or token.get('address')}")
+        return False
+
     return True
+
+
+def passes_candle_analysis(token: dict) -> bool:
+    """
+    Analyze the first 5-6 candles for breakout patterns.
+    This is the core of the new strategy for predicting where the market will go.
+    """
+    # Get candle data
+    candles = token.get("candles", [])
+    age_minutes = token.get("age_minutes", 0)
+    
+    if len(candles) < 3:
+        # If we don't have enough candles yet, be more permissive for very new tokens
+        if age_minutes < 10:  # Less than 10 minutes old
+            # For very new tokens, rely more on other metrics
+            logger.info(f"Candle Analysis: Very new token ({age_minutes}m), using other metrics for {token.get('symbol')}")
+            return True
+        return False
+    
+    # Use the new comprehensive candle analysis module
+    try:
+        from early_detector.candle_analysis import analyze_candles, is_early_token, get_early_token_strategy
+        
+        # Perform comprehensive candle analysis
+        analysis_result = analyze_candles(candles)
+        
+        if analysis_result.get("score", 0) >= 0.6:
+            logger.info(f"Candle Analysis: Strong bullish signal (score: {analysis_result.get('score', 0):.2f}) for {token.get('symbol')}")
+            return True
+        elif analysis_result.get("score", 0) >= 0.4:
+            logger.info(f"Candle Analysis: Moderate bullish signal (score: {analysis_result.get('score', 0):.2f}) for {token.get('symbol')}")
+            return True
+        elif is_early_token(candles, age_minutes):
+            strategy = get_early_token_strategy(candles, analysis_result.get("analysis", {}))
+            if strategy.startswith(("AGGRESSIVE ENTRY", "CAUTIOUS ENTRY")):
+                logger.info(f"Candle Analysis: Early token strategy ({strategy}) for {token.get('symbol')}")
+                return True
+        
+        # Log patterns detected even if not strong enough
+        patterns = analysis_result.get("patterns", [])
+        if patterns:
+            logger.info(f"Candle Analysis: Patterns detected ({', '.join(patterns)}) for {token.get('symbol')}")
+            
+        return False
+        
+    except Exception as e:
+        logger.warning(f"Candle analysis failed for {token.get('symbol')}: {e}")
+        # If candle analysis fails, don't reject - be permissive
+        return True
+
+
 
 
 def passes_safety_filters(token: dict) -> bool:
@@ -82,9 +138,9 @@ def passes_safety_filters(token: dict) -> bool:
     - REJECT if Mint Authority is still enabled.
     - REJECT if Freeze Authority is still enabled.
     - REJECT if Top 10 Holders ratio > TOP10_MAX_RATIO.
-    - REJECT if Insider Probability (PSI) > 0.65 (down from 0.85).
-    - REJECT if Creator Risk Score > 0.5 (down from 0.7).
-    - REJECT if Price Spike > 5x in 5m.
+    - REJECT if Insider Probability (PSI) > 0.75 (more flexible for meme coins).
+    - REJECT if Creator Risk Score > 0.6 (more flexible for meme coins).
+    - REJECT if Price Spike > 8x in 5m (allow more volatility).
     """
     # 1. On-chain Authorities (Critical)
     mint_auth = token.get("mint_authority")
@@ -108,25 +164,25 @@ def passes_safety_filters(token: dict) -> bool:
         else:
             logger.info(f"Safety Grace: Top 10 concentration UNKNOWN for early cap ({mcap:,.0f}) — PROCEEDING")
             # We don't return True yet, continue to other filters
-    elif top10_ratio > 45.0: # Increased from 35% to 45% as many legit meme coins are concentrated early
+    elif top10_ratio > 60.0: # Increased from 45% to 60% as many legit meme coins are concentrated early
         logger.info(f"Safety: Top 10 concentration too high ({top10_ratio:.1f}%) — REJECTED")
         return False
 
-    # 3. Behavioral Risk
+    # 3. Behavioral Risk (More flexible for meme coins)
     insider_psi = (token.get("insider_psi") or 0.0)
-    if insider_psi > 0.65:
+    if insider_psi > 0.75: # Increased from 0.65 to 0.75
         logger.info(f"Safety: High Insider Probability ({insider_psi:.2f}) — REJECTED")
         return False
         
     creator_risk = (token.get("creator_risk_score") or 0.1)
-    if creator_risk > 0.5:
+    if creator_risk > 0.6: # Increased from 0.5 to 0.6
         logger.info(f"Safety: High Creator Risk ({creator_risk:.2f}) — REJECTED")
         return False
 
-    # 4. Momentum Spike check
+    # 4. Momentum Spike check (More flexible)
     price_change_5m = (token.get("price_change_5m") or 0.0)
     from early_detector.config import SPIKE_THRESHOLD
-    if price_change_5m and price_change_5m >= SPIKE_THRESHOLD:
+    if price_change_5m and price_change_5m >= 8.0: # Increased from 5x to 8x
         logger.info(f"Safety: Price Spike detected ({price_change_5m:.2f}x) — REJECTED")
         return False
         
