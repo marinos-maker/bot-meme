@@ -402,35 +402,23 @@ async def api_analytics():
     pool = await get_pool()
     
     # Get latest metrics for all active tokens (last 30m, fallback to 4h if none)
-    interval = '30 minutes'
     rows = await pool.fetch(
         """
-        SELECT DISTINCT ON (t.address)
-            t.address, t.symbol, t.name,
-            m.price, m.marketcap, m.liquidity, 
-            m.volume_5m, m.instability_index, m.timestamp
-        FROM tokens t
-        JOIN token_metrics_timeseries m ON m.token_id = t.id
-        WHERE m.timestamp > NOW() - INTERVAL '2 minutes'
-        ORDER BY t.address, m.timestamp DESC
-        """
-    )
-    
-    if not rows:
-        interval = '4 hours'
-        logger.info(f"No tokens in last 30m, falling back to {interval}")
-        rows = await pool.fetch(
-            f"""
-            SELECT DISTINCT ON (t.id)
-                t.address, t.symbol, t.name,
-                m.price, m.marketcap, m.liquidity, 
-                m.volume_5m, m.instability_index, m.timestamp
+        WITH recent_metrics AS (
+            SELECT t.address, t.symbol, t.name,
+                   m.price, m.marketcap, m.liquidity, 
+                   m.volume_5m, m.instability_index, m.timestamp,
+                   ROW_NUMBER() OVER(PARTITION BY t.address ORDER BY m.timestamp DESC) as rn
             FROM tokens t
             JOIN token_metrics_timeseries m ON m.token_id = t.id
-            WHERE m.timestamp > NOW() - INTERVAL '{interval}'
-            ORDER BY t.id, m.timestamp DESC
-            """
+            WHERE m.timestamp > NOW() - INTERVAL '1 hour'
         )
+        SELECT * FROM recent_metrics 
+        WHERE rn = 1 AND instability_index IS NOT NULL
+        ORDER BY instability_index DESC
+        LIMIT 400
+        """
+    )
     
     import math
     

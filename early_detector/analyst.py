@@ -2,9 +2,11 @@
 AI Analyst — Uses Gemini LLM to interpret token signals and metrics.
 """
 
+import asyncio
 import json
 from datetime import datetime
 from loguru import logger
+from duckduckgo_search import DDGS
 from early_detector.config import GOOGLE_API_KEY, OPENAI_API_KEY, OPENAI_BASE_URL, AI_MODEL_NAME
 
 # Setup OpenAI
@@ -45,6 +47,27 @@ if not HAS_NEW_GENAI and GOOGLE_API_KEY:
 AI_CACHE = {}
 CACHE_TTL = 600 # 10 minutes
 
+async def get_social_sentiment(symbol: str, name: str) -> str:
+    """Uses DuckDuckGo to scrape recent Twitter snippets matching the token symbol."""
+    try:
+        def do_search():
+            query = f'site:twitter.com "{symbol}" crypto OR solana OR "{name}"'
+            try:
+                # DDGS can sometimes fail or be heavily rate limited
+                results = DDGS().text(query, max_results=3)
+                if not results:
+                    return "No distinct social sentiment found on X."
+                return " | ".join([r.get("body", "") for r in results])
+            except:
+                return "Search ratelimited."
+        
+        # Run synchronous web scraper in thread pool
+        snippets = await asyncio.to_thread(do_search)
+        return snippets
+    except Exception as e:
+        logger.debug(f"Social search skipped/failed: {e}")
+        return "Search failed or unavailable."
+
 async def analyze_token_signal(token_data: dict, history: list) -> dict:
     """
     Asks Gemini to analyze a token based on current metrics and history.
@@ -83,6 +106,7 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         mint_auth = current.get('mint_authority')
         freeze_auth = current.get('freeze_authority')
         top10 = current.get('top10_ratio') or 0.0
+        has_twitter = current.get('has_twitter')
         
         h_growth = 0
         if len(history) > 1:
@@ -90,6 +114,9 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
             curr_h = holders
             if prev_h > 0:
                 h_growth = ((curr_h - prev_h) / prev_h) * 100
+
+        logger.info(f"🔍 AI: Running background web search for {symbol} on X...")
+        twitter_snippets = await get_social_sentiment(symbol, current.get('name') or '')
 
         # 2. Build Prompt
         prompt = f"""
@@ -112,12 +139,16 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         - Insider Probability (PSI): {insider_psi:.2f}
         - Creator Reputation Risk: {creator_risk:.2f}
         - Authorities: Mint: {"⚠️ ENABLED" if mint_auth else "✅ Revoked"}, Freeze: {"⚠️ ENABLED" if freeze_auth else "✅ Revoked"}
+        - Official Socials Provided: {"✅ YES" if has_twitter else "❌ NO (Ghost Token / Sus)"}
+        - Recent Live Web Sentiment (Twitter/X): "{twitter_snippets}"
         - Narrative: {narrative}
         
         CRITICAL RULES:
         1. If Mint or Freeze is ENABLED, Verdict MUST be AVOID.
-        2. If Top 10 > 50%, be extremely critical.
-        3. If Insider PSI > 0.7, assume it's a cabal/scam.
+        2. If 'Official Socials Provided' is NO and 'Creator Reputation Risk' > 0.6, penalize score severely.
+        3. If 'Live Web Sentiment' looks overly bot-spammed, warn about it.
+        4. If Top 10 > 50%, be extremely critical.
+        5. You MUST explicitly mention the presence or absence of Twitter Socials / Web Sentiment in your 'risks' or 'summary', no matter how bad the other metrics are.
         
         Return ONLY a JSON object (no markdown, no backticks):
         {{

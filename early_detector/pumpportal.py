@@ -3,7 +3,7 @@ import asyncio
 import websockets
 import json
 from loguru import logger
-from early_detector.db import upsert_token, touch_wallet, get_pool, upsert_wallet
+from early_detector.db import upsert_token, touch_wallet, get_pool, upsert_wallet, upsert_creator_stats
 
 async def pumpportal_worker(token_queue: asyncio.Queue, smart_wallets: list[str]) -> None:
     """
@@ -122,8 +122,12 @@ async def pumpportal_worker(token_queue: asyncio.Queue, smart_wallets: list[str]
                             if symbol == "???" or symbol == "Unknown":
                                 symbol = f"TOK{mint[:4]}"
                             
-                            logger.info(f"🆕 PumpPortal: New Token {symbol} ({mint[:6]}...)")
-                            await upsert_token(mint, name, symbol, narrative="GENERIC")
+                            logger.info(f"🆕 PumpPortal: New Token {symbol} ({mint[:6]}...) by {trader[:6]}...")
+                            await upsert_token(mint, name, symbol, narrative="GENERIC", creator_address=trader)
+                            
+                            # Increment tokens launched by this creator
+                            if trader:
+                                await upsert_creator_stats(trader, {"total_tokens": 1})
                         
                         # B. Trade Activity & Wallet Tracking
                         if trader and tx_type in ["buy", "sell", "migration"]:

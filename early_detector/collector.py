@@ -64,6 +64,10 @@ async def fetch_dexscreener_pair(session: aiohttp.ClientSession,
                 return None
             # Use the pair with highest liquidity
             pair = max(pairs, key=lambda p: float(p.get("liquidity", {}).get("usd", 0) or 0))
+            
+            socials = pair.get("info", {}).get("socials", [])
+            has_twitter = any(s.get("type") == "twitter" for s in socials)
+            
             return {
                 "name": pair.get("baseToken", {}).get("name"),
                 "symbol": pair.get("baseToken", {}).get("symbol"),
@@ -75,6 +79,7 @@ async def fetch_dexscreener_pair(session: aiohttp.ClientSession,
                 "buys_5m": int(pair.get("txns", {}).get("m5", {}).get("buys", 0) or 0),
                 "sells_5m": int(pair.get("txns", {}).get("m5", {}).get("sells", 0) or 0),
                 "pair_created_at": pair.get("pairCreatedAt"),
+                "has_twitter": has_twitter,
             }
     except Exception as e:
         logger.error(f"DexScreener fetch error for {token_address}: {e}")
@@ -144,7 +149,7 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
     # Initialize missing fields that were previously provided by Helius/Birdeye
     # to avoid crashes in feature calculation
     for field in ["holders", "top10_ratio", "mint_authority", "freeze_authority", 
-                  "creator_risk_score", "unique_buyers_50tx", "insider_psi"]:
+                  "creator_risk_score", "unique_buyers_50tx", "insider_psi", "has_twitter"]:
         if field not in metrics:
             metrics[field] = None if field in ["mint_authority", "freeze_authority"] else 0.0
 

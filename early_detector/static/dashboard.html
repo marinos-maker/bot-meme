@@ -1586,7 +1586,7 @@
 
         function startAutoRefresh() {
             clearInterval(refreshInterval);
-            refreshInterval = setInterval(refreshAll, 3000); // 3s for truly real-time vision
+            refreshInterval = setInterval(refreshAll, 10000); // 10s to drastically reduce Supabase network traffic
         }
 
         // Filtering state

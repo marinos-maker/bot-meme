@@ -75,7 +75,9 @@ async def upsert_creator_stats(creator_address: str, stats: dict) -> None:
         INSERT INTO creator_performance (creator_address, rug_ratio, avg_lifespan, total_tokens)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (creator_address) DO UPDATE
-            SET rug_ratio = $2, avg_lifespan = $3, total_tokens = $4
+            SET rug_ratio = $2, 
+                avg_lifespan = $3, 
+                total_tokens = creator_performance.total_tokens + $4
         """,
         creator_address,
         stats.get("rug_ratio", 0.0),
