@@ -53,6 +53,21 @@ def calculate_quantitative_degen_score(token_data: dict, confidence: float) -> i
     else:  # Very low liquidity
         score -= 10
         logger.debug(f"Subtracted liquidity penalty: -10, total: {score}")
+        
+    # Velocity modifier (Volume compared to Liquidity)
+    vol = token_data.get("volume_5m", 0) or 0
+    if liq > 0:
+        velocity = (vol / liq) * 100
+        logger.debug(f"Velocity (Vol/Liq): {velocity:.1f}%")
+        if velocity > 50:
+            score += 15
+            logger.debug(f"Added velocity bonus: +15, total: {score}")
+        elif velocity > 20:
+            score += 10
+            logger.debug(f"Added velocity bonus: +10, total: {score}")
+        elif velocity > 5:
+            score += 5
+            logger.debug(f"Added velocity bonus: +5, total: {score}")
     
     # Market Cap modifier (smaller caps = higher degen potential)
     mcap = token_data.get("marketcap", 0) or 0
@@ -132,15 +147,15 @@ def passes_trigger(token: dict, threshold: float) -> bool:
     if ii == 0 and threshold == 0:
         return False
     
-    # 2. Condition: dII/dt > -1.0 (More permissive momentum)
+    # 2. Condition: dII/dt > -2.5 (More permissive momentum)
     # Catch tokens even if they are stabilizing after a peak
-    if delta_ii < -1.0:
+    if delta_ii < -2.5:
         logger.info(f"Trigger rejected: Sharp falling instability (II={ii:.3f}, dII={delta_ii:.3f}) for {token.get('symbol')}")
         return False
         
-    # 3. Condition: Price Compression (vol_shift < 3.0)
+    # 3. Condition: Price Compression (vol_shift < 5.0)
     # Be more permissive with recent price action
-    if vol_shift >= 3.0 and ii < (threshold * 2.0):
+    if vol_shift >= 5.0 and ii < (threshold * 1.5):
         logger.info(f"Trigger rejected: Extreme Volatility expansion (vol_shift={vol_shift:.2f}) for {token.get('symbol')}")
         return False
     
@@ -153,7 +168,7 @@ def passes_trigger(token: dict, threshold: float) -> bool:
             return False
 
         # Relaxed exception: allow low liquidity (but > $50) if II is very high and it's a new small cap
-        if ii > (threshold * 2.5) and mcap < 200000 and liq >= 50:
+        if ii > (threshold * 1.5) and mcap < 400000 and liq >= 50:
             logger.info(f"Trigger exception: High II ({ii:.3f}) for new low-liquidity token {token.get('symbol') or token.get('address')} (Liq: {liq:.0f})")
         else:
             logger.info(f"Trigger rejected: Low Liquidity ({liq:.0f} < {LIQUIDITY_MIN}) for {token.get('symbol') or token.get('address')}")
@@ -255,25 +270,25 @@ def passes_safety_filters(token: dict) -> bool:
         else:
             logger.info(f"Safety Grace: Top 10 concentration UNKNOWN for early cap ({mcap:,.0f}) — PROCEEDING")
             # We don't return True yet, continue to other filters
-    elif top10_ratio > 60.0: # Increased from 45% to 60% as many legit meme coins are concentrated early
+    elif top10_ratio > 75.0: # Increased to 75% as many legit meme coins are concentrated early
         logger.info(f"Safety: Top 10 concentration too high ({top10_ratio:.1f}%) — REJECTED")
         return False
 
     # 3. Behavioral Risk (More flexible for meme coins)
     insider_psi = (token.get("insider_psi") or 0.0)
-    if insider_psi > 0.75: # Increased from 0.65 to 0.75
+    if insider_psi > 0.85: # Increased to 0.85
         logger.info(f"Safety: High Insider Probability ({insider_psi:.2f}) — REJECTED")
         return False
         
     creator_risk = (token.get("creator_risk_score") or 0.1)
-    if creator_risk > 0.6: # Increased from 0.5 to 0.6
+    if creator_risk > 0.75: # Increased to 0.75
         logger.info(f"Safety: High Creator Risk ({creator_risk:.2f}) — REJECTED")
         return False
 
     # 4. Momentum Spike check (More flexible)
     price_change_5m = (token.get("price_change_5m") or 0.0)
     from early_detector.config import SPIKE_THRESHOLD
-    if price_change_5m and price_change_5m >= 8.0: # Increased from 5x to 8x
+    if price_change_5m and price_change_5m >= 15.0: # Increased to 15x
         logger.info(f"Safety: Price Spike detected ({price_change_5m:.2f}x) — REJECTED")
         return False
         
@@ -287,7 +302,7 @@ def passes_quality_gate(token_data: dict, ai_result: dict) -> bool:
     """
     # 1. Lowered Liquidity Floor for Early Detection (V4.7)
     liq = token_data.get("liquidity") or 0
-    if liq < 300:
+    if liq < 100:
         logger.info(f"Quality Gate: REJECTED {token_data.get('symbol')} - Liquidity too low (${liq:.0f})")
         return False
 
@@ -299,10 +314,10 @@ def passes_quality_gate(token_data: dict, ai_result: dict) -> bool:
         now_ms = time.time() * 1000
         age_min = (now_ms - created_at) / (1000 * 60)
         
-        # If less than 15 minutes old, require DECENT Ai degen score
+        # If less than 15 minutes old, require DECENT degen score
         if age_min < 15:
-            degen_score = ai_result.get("degen_score") or 0
-            if degen_score < 65:
+            degen_score = ai_result.get("degen_score") or token_data.get("degen_score") or 0
+            if degen_score < 45:
                 logger.info(f"Quality Gate: REJECTED {token_data.get('symbol')} - Too new ({age_min:.1f}m) and low AI score ({degen_score})")
                 return False
                 
