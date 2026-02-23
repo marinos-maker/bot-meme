@@ -5,9 +5,24 @@ AI Analyst — Uses Gemini LLM to interpret token signals and metrics.
 import json
 from datetime import datetime
 from loguru import logger
-from early_detector.config import GOOGLE_API_KEY
+from early_detector.config import GOOGLE_API_KEY, OPENAI_API_KEY, OPENAI_BASE_URL, AI_MODEL_NAME
 
-# Try using the new google-genai library if available, otherwise fallback (though this file is updated to use new syntax)
+# Setup OpenAI
+try:
+    from openai import AsyncOpenAI
+    HAS_OPENAI = True
+except ImportError:
+    HAS_OPENAI = False
+
+if HAS_OPENAI and OPENAI_API_KEY:
+    openai_client = AsyncOpenAI(
+        api_key=OPENAI_API_KEY,
+        base_url=OPENAI_BASE_URL
+    )
+else:
+    openai_client = None
+
+# Try using the new google-genai library if available, otherwise fallback
 try:
     from google import genai
     from google.genai import types
@@ -34,24 +49,19 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
     Includes caching to avoid duplicate expensive AI calls.
     Falls back to quantitative scoring when AI is unavailable.
     """
-    if not GOOGLE_API_KEY:
-        logger.warning("🧠 AI: GOOGLE_API_KEY not configured, using quantitative fallback")
+    if not GOOGLE_API_KEY and not OPENAI_API_KEY:
+        logger.warning("🧠 AI: Config keys absent, using quantitative fallback")
         return calculate_quantitative_score(token_data, history)
-    
-    # Force fallback for testing if API key is invalid
-    # Comment this out when API key is working
-    logger.warning("🧠 AI: Forcing quantitative fallback for testing")
-    return calculate_quantitative_score(token_data, history)
 
     address = token_data.get('address') or 'Unknown'
     
-    # ── Check Cache ──
-    now = datetime.now().timestamp()
-    if address in AI_CACHE:
-        ts, cached_result = AI_CACHE[address]
-        if now - ts < CACHE_TTL:
-            logger.info(f"🧠 AI: Using cached result for {address[:8]}...")
-            return cached_result
+    # Caching disabled: if it reaches here, it must be analyzed again because the quantitative engine fired again.
+    # now = datetime.now().timestamp()
+    # if address in AI_CACHE:
+    #     ts, cached_result = AI_CACHE[address]
+    #     if now - ts < CACHE_TTL:
+    #         logger.info(f"🧠 AI: Using cached result for {address[:8]}...")
+    #         return cached_result
 
     try:
         # 1. Prepare data for prompt with defaults for None values
@@ -126,48 +136,71 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         # 3. Request Analysis
         response_text = ""
         
-        # Use available models (Gemini 2.0 Flash is preferred, 1.5 as fallback)
-        models_to_try = [
-            'gemini-2.0-flash', 
-            'gemini-2.0-flash-lite-preview-02-05',
-            'gemini-1.5-flash', 
-            'gemini-1.5-pro'
-        ]
-        
-        if HAS_NEW_GENAI:
-            client = genai.Client(api_key=GOOGLE_API_KEY)
-            for model_name in models_to_try:
-                try:
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=prompt
-                    )
-                    if response and response.text:
-                        response_text = response.text
-                        break
-                except Exception as e:
-                    err_msg = str(e).upper()
-                    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                        logger.warning(f"Gemini 429 on {model_name}, quota reached. Waiting 2s...")
-                        import asyncio
-                        await asyncio.sleep(2)
-                    elif "404" in err_msg or "NOT_FOUND" in err_msg:
-                        logger.warning(f"Model {model_name} not found, skipping...")
-                    else:
-                        logger.warning(f"Failed with {model_name} (new genai): {e}")
-                    continue
+        if openai_client:
+            try:
+                # Use OpenAI SDK (e.g., for OpenRouter / Z.AI)
+                response = await openai_client.chat.completions.create(
+                    model=AI_MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": "You are a professional Crypto Alpha Analyst."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.6,
+                    max_tokens=500
+                )
+                if response.choices and response.choices[0].message.content:
+                    response_text = response.choices[0].message.content
+            except Exception as e:
+                err_msg = str(e).upper()
+                if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "RATE_LIMIT" in err_msg:
+                    logger.warning(f"OpenAI API 429 quota reached. Waiting 2s...")
+                    import asyncio
+                    await asyncio.sleep(2)
+                else:
+                    logger.warning(f"Failed with OpenAI API ({AI_MODEL_NAME}): {e}")
         else:
-            # Fallback to old library
-            for model_name in models_to_try:
-                try:
-                    model = genai_old.GenerativeModel(model_name or 'gemini-1.5-flash')
-                    response = model.generate_content(prompt)
-                    if response and response.text:
-                        response_text = response.text
-                        break
-                except Exception as e:
-                    logger.warning(f"Failed with {model_name} (old genai): {e}")
-                    continue
+            # Use Google Gemini as fallback
+            models_to_try = [
+                'gemini-2.0-flash', 
+                'gemini-2.0-flash-lite-preview-02-05',
+                'gemini-1.5-flash', 
+                'gemini-1.5-pro'
+            ]
+            
+            if HAS_NEW_GENAI:
+                client = genai.Client(api_key=GOOGLE_API_KEY)
+                for model_name in models_to_try:
+                    try:
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=prompt
+                        )
+                        if response and response.text:
+                            response_text = response.text
+                            break
+                    except Exception as e:
+                        err_msg = str(e).upper()
+                        if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                            logger.warning(f"Gemini 429 on {model_name}, quota reached. Waiting 2s...")
+                            import asyncio
+                            await asyncio.sleep(2)
+                        elif "404" in err_msg or "NOT_FOUND" in err_msg:
+                            logger.warning(f"Model {model_name} not found, skipping...")
+                        else:
+                            logger.warning(f"Failed with {model_name} (new genai): {e}")
+                        continue
+            else:
+                # Fallback to old library
+                for model_name in models_to_try:
+                    try:
+                        model = genai_old.GenerativeModel(model_name or 'gemini-1.5-flash')
+                        response = model.generate_content(prompt)
+                        if response and response.text:
+                            response_text = response.text
+                            break
+                    except Exception as e:
+                        logger.warning(f"Failed with {model_name} (old genai): {e}")
+                        continue
 
         if not response_text:
             return {

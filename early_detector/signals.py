@@ -56,6 +56,7 @@ def calculate_quantitative_degen_score(token_data: dict, confidence: float) -> i
         
     # Velocity modifier (Volume compared to Liquidity)
     vol = token_data.get("volume_5m", 0) or 0
+    velocity = 0
     if liq > 0:
         velocity = (vol / liq) * 100
         logger.debug(f"Velocity (Vol/Liq): {velocity:.1f}%")
@@ -85,7 +86,7 @@ def calculate_quantitative_degen_score(token_data: dict, confidence: float) -> i
     # Insider Risk modifier (lower risk = higher score)
     psi = token_data.get("insider_psi", 0) or 0
     logger.debug(f"Insider Risk: {psi}")
-    if psi < 0.2:  # Low insider risk
+    if psi < 0.2 and (velocity > 5 or liq > 800):  # Low insider risk
         score += 10
         logger.debug(f"Added low insider risk bonus: +10, total: {score}")
     elif psi > 0.5:  # High insider risk
@@ -95,7 +96,7 @@ def calculate_quantitative_degen_score(token_data: dict, confidence: float) -> i
     # Creator Risk modifier (lower risk = higher score)
     creator_risk = token_data.get("creator_risk_score", 0) or 0
     logger.debug(f"Creator Risk: {creator_risk}")
-    if creator_risk < 0.3:  # Low creator risk
+    if creator_risk < 0.3 and (velocity > 5 or liq > 800):  # Low creator risk
         score += 5
         logger.debug(f"Added low creator risk bonus: +5, total: {score}")
     elif creator_risk > 0.7:  # High creator risk
@@ -146,6 +147,11 @@ def passes_trigger(token: dict, threshold: float) -> bool:
     # Extra check: if all scores are 0, reject (no variance in batch)
     if ii == 0 and threshold == 0:
         return False
+        
+    # HARD FLOOR: Even if threshold is 0.0000, we need actual momentum
+    if ii < 10.0:
+        logger.info(f"Trigger rejected: II too low for actual momentum ({ii:.3f} < 10.0) for {token.get('symbol')}")
+        return False
     
     # 2. Condition: dII/dt > -2.5 (More permissive momentum)
     # Catch tokens even if they are stabilizing after a peak
@@ -167,9 +173,9 @@ def passes_trigger(token: dict, threshold: float) -> bool:
             logger.info(f"Trigger rejected: ZERO Liquidity for {token.get('symbol') or token.get('address')}")
             return False
 
-        # Relaxed exception: allow low liquidity (but > $50) if II is very high and it's a new small cap
-        if ii > (threshold * 1.5) and mcap < 400000 and liq >= 50:
-            logger.info(f"Trigger exception: High II ({ii:.3f}) for new low-liquidity token {token.get('symbol') or token.get('address')} (Liq: {liq:.0f})")
+        # Relaxed exception: allow low liquidity (but > $800) if II is very high and it's a new small cap
+        if ii > (threshold * 1.5) and mcap < 400000 and liq >= 800:
+            logger.info(f"Trigger exception: High II ({ii:.3f}) for new token {token.get('symbol') or token.get('address')} with acceptable liq (Liq: {liq:.0f})")
         else:
             logger.info(f"Trigger rejected: Low Liquidity ({liq:.0f} < {LIQUIDITY_MIN}) for {token.get('symbol') or token.get('address')}")
             return False
@@ -442,20 +448,24 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
         from early_detector.diary import log_trade_signal
         log_trade_signal(signal, regime_label)
 
-        # Calculate Quantitative Degen Score (V4.8) - when AI Analyst is disabled
-        # This provides a numerical score based on available metrics
-        degen_score = calculate_quantitative_degen_score(token_data, base_confidence)
+        # ── AI Analysis (Z.AI OpenRouter) ──
+        from early_detector.analyst import analyze_token_signal
+        
+        logger.info(f"🧠 Prompting AI Analyst for {signal.get('symbol')}...")
+        # Since history is difficult to reconstruct fully here, we pass empty list.
+        # Analyst.py uses token_data and handles empty history gracefully.
+        ai_result = await analyze_token_signal(token_data, [])
+        
+        degen_score = ai_result.get("degen_score")
+        if degen_score is None:
+            degen_score = calculate_quantitative_degen_score(token_data, base_confidence)
+            
         signal["degen_score"] = degen_score
-        signal["ai_summary"] = f"Quantitative Score: {degen_score}"
-        signal["ai_analysis"] = {
-            "verdict": "WAIT",
-            "rating": degen_score,
-            "summary": f"Score based on Instability Index ({token_data.get('instability', 0):.2f}), Liquidity (${token_data.get('liquidity', 0):.0f}), and Confidence ({base_confidence:.1%})",
-            "risks": []
-        }
+        signal["ai_summary"] = ai_result.get("summary", f"Score: {degen_score}")
+        signal["ai_analysis"] = ai_result
 
-        # V4.6 Stability Quality Gate - modified to use empty ai_result
-        if not passes_quality_gate(signal, {}):
+        # V4.6 Stability Quality Gate
+        if not passes_quality_gate(signal, ai_result):
              continue
 
         # Save to DB
