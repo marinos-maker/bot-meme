@@ -2305,8 +2305,14 @@
             const container = document.getElementById('topPicksContainer');
             const grid = document.getElementById('topPicksGrid');
 
-            // Focus on top 3 by score
+            // Focus on top 3 by score from the last 2 hours
+            const now = new Date();
             const top = [...signals]
+                .filter(s => {
+                    const dt = new Date(s.timestamp);
+                    const ageHrs = (now - dt) / 3600000;
+                    return ageHrs <= 2.0; // Fresh signals only
+                })
                 .sort((a, b) => b.degen_score - a.degen_score)
                 .slice(0, 3);
 

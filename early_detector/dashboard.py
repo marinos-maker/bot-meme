@@ -99,13 +99,22 @@ async def api_signals(limit: int = 50):
     pool = await get_pool()
     rows = await pool.fetch(
         """
+        WITH latest_metrics AS (
+            SELECT DISTINCT ON (token_id) *
+            FROM token_metrics_timeseries
+            ORDER BY token_id, timestamp DESC
+        )
         SELECT s.id, s.timestamp, s.instability_index, s.entry_price,
-               s.liquidity, s.marketcap, s.confidence, s.kelly_size,
+               s.kelly_size, s.confidence,
                s.insider_psi, s.creator_risk, s.degen_score, s.ai_summary, s.ai_analysis,
                t.address, t.name, t.symbol,
-               (SELECT top10_ratio FROM token_metrics_timeseries m WHERE m.token_id = s.token_id ORDER BY m.timestamp DESC LIMIT 1) as top10_ratio
+               m.marketcap as live_marketcap,
+               m.liquidity as live_liquidity,
+               m.top10_ratio as live_top10_ratio,
+               m.price as live_price
         FROM signals s
         JOIN tokens t ON t.id = s.token_id
+        LEFT JOIN latest_metrics m ON m.token_id = s.token_id
         ORDER BY s.timestamp DESC
         LIMIT $1
         """,
@@ -116,9 +125,9 @@ async def api_signals(limit: int = 50):
     signals = []
     for r in rows:
         ii = float(r["instability_index"] or 0)
-        price = float(r["entry_price"] or 0)
-        liq = float(r["liquidity"] or 0)
-        mcap = float(r["marketcap"] or 0)
+        price = float(r["live_price"] or r["entry_price"] or 0)
+        liq = float(r["live_liquidity"] or 0)
+        mcap = float(r["live_marketcap"] or 0)
         conf = float(r["confidence"] or 0)
         kelly = float(r["kelly_size"] or 0)
         psi = float(r["insider_psi"] or 0)
@@ -152,7 +161,7 @@ async def api_signals(limit: int = 50):
             "kelly_size": kelly,
             "insider_psi": psi,
             "creator_risk": risk,
-            "top10_ratio": float(r.get("top10_ratio") or 0),
+            "top10_ratio": float(r.get("live_top10_ratio") or 0),
             "degen_score": r["degen_score"],
             "ai_summary": r["ai_summary"],
             "ai_analysis": ai_analysis,
@@ -171,13 +180,22 @@ async def api_signals_recent(minutes: int = 10):
     pool = await get_pool()
     rows = await pool.fetch(
         """
+        WITH latest_metrics AS (
+            SELECT DISTINCT ON (token_id) *
+            FROM token_metrics_timeseries
+            ORDER BY token_id, timestamp DESC
+        )
         SELECT s.id, s.timestamp, s.instability_index, s.entry_price,
-               s.liquidity, s.marketcap, s.confidence, s.kelly_size,
+               s.kelly_size, s.confidence,
                s.insider_psi, s.creator_risk, s.degen_score, s.ai_summary, s.ai_analysis,
                t.address, t.name, t.symbol,
-               (SELECT top10_ratio FROM token_metrics_timeseries m WHERE m.token_id = s.token_id ORDER BY m.timestamp DESC LIMIT 1) as top10_ratio
+               m.marketcap as live_marketcap,
+               m.liquidity as live_liquidity,
+               m.top10_ratio as live_top10_ratio,
+               m.price as live_price
         FROM signals s
         JOIN tokens t ON t.id = s.token_id
+        LEFT JOIN latest_metrics m ON m.token_id = s.token_id
         WHERE s.timestamp > NOW() - INTERVAL $1
         ORDER BY s.timestamp DESC
         """,
@@ -188,9 +206,9 @@ async def api_signals_recent(minutes: int = 10):
     signals = []
     for r in rows:
         ii = float(r["instability_index"] or 0)
-        price = float(r["entry_price"] or 0)
-        liq = float(r["liquidity"] or 0)
-        mcap = float(r["marketcap"] or 0)
+        price = float(r["live_price"] or r["entry_price"] or 0)
+        liq = float(r["live_liquidity"] or 0)
+        mcap = float(r["live_marketcap"] or 0)
         conf = float(r["confidence"] or 0)
         kelly = float(r["kelly_size"] or 0)
         psi = float(r["insider_psi"] or 0)
@@ -224,7 +242,7 @@ async def api_signals_recent(minutes: int = 10):
             "kelly_size": kelly,
             "insider_psi": psi,
             "creator_risk": risk,
-            "top10_ratio": float(r["top10_ratio"] or 0),
+            "top10_ratio": float(r["live_top10_ratio"] or 0),
             "degen_score": r["degen_score"],
             "ai_summary": r["ai_summary"],
             "ai_analysis": ai_analysis,
