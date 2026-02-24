@@ -411,9 +411,9 @@ def calculate_quantitative_score(token_data: dict, history: list) -> dict:
     
     # 8. Top 10 Concentration Penalty (0-15 points)
     # Early coins naturally have high Top10. Don't heavily penalize unless > 85%
-    if top10 >= 0.90:
+    if top10 >= 90.0:
         risk_penalty += 15
-    elif top10 >= 0.85:
+    elif top10 >= 85.0:
         risk_penalty += 5
     
     # 9. Creator Risk Penalty (0-10 points)
@@ -456,8 +456,8 @@ def calculate_quantitative_score(token_data: dict, history: list) -> dict:
     else:
         if mint_auth or freeze_auth:
             summary = "CRITICAL: Mint/Freeze authority enabled - potential rug pull"
-        elif top10 >= 0.5:
-            summary = f"High concentration risk: Top 10 hold {top10*100:.1f}%"
+        elif top10 >= 50.0:
+            summary = f"High concentration risk: Top 10 hold {top10:.1f}%"
         elif insider_psi >= 0.6:
             summary = f"High insider probability ({insider_psi:.2f}) - potential cabal"
         else:
@@ -467,8 +467,8 @@ def calculate_quantitative_score(token_data: dict, history: list) -> dict:
     risks = []
     if mint_auth or freeze_auth:
         risks.append("CRITICAL: Mint/Freeze authority enabled")
-    if top10 >= 0.5:
-        risks.append(f"High concentration: Top 10 hold {top10*100:.1f}%")
+    if top10 >= 50.0:
+        risks.append(f"High concentration: Top 10 hold {top10:.1f}%")
     if insider_psi >= 0.6:
         risks.append(f"High insider probability ({insider_psi:.2f})")
     if liq < 1000:
@@ -499,8 +499,8 @@ def calculate_quantitative_score(token_data: dict, history: list) -> dict:
     
     if insider_psi >= 0.4:
         bear_case.append(f"High insider probability ({insider_psi:.2f}) suggests coordinated activity")
-    if top10 >= 0.3:
-        bear_case.append(f"Concentrated ownership (Top 10: {top10*100:.1f}%)")
+    if top10 >= 30.0:
+        bear_case.append(f"Concentrated ownership (Top 10: {top10:.1f}%)")
     if creator_risk >= 0.4:
         bear_case.append(f"High creator risk ({creator_risk:.2f})")
     if liq < 1000:

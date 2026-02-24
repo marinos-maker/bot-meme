@@ -193,7 +193,10 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
             
         curr_liq = metrics.get("liquidity") or 0
         if curr_liq < 100 and mcap > 0:
-            metrics["liquidity"] = mcap * 0.18
+            # V4.5: Increased multiplier from 0.18 to 0.40
+            # On Pump.fun, virtual liquidity is typically higher than 18% of Mcap
+            # during the bonding curve phase.
+            metrics["liquidity"] = mcap * 0.40
             logger.debug(f"Applied virtual liquidity for {token_address[:8]}: ${metrics['liquidity']:,.0f}")
 
     # Integrate Helius metrics if available ONLY FOR VIABLE TOKENS

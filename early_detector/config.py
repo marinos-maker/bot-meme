@@ -62,6 +62,7 @@ DASHBOARD_PORT: int = int(os.getenv("PORT", os.getenv("DASHBOARD_PORT", "8050"))
 MAX_TOP5_HOLDER_RATIO: float = 0.40
 DEV_WALLET_TIMEOUT_MIN: int = 10
 SPIKE_THRESHOLD: float = 5.0   # 5x in 5 min = too late
+HOLDERS_MIN: int = int(os.getenv("HOLDERS_MIN", "50"))  # Minimum unique holders
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_FILE: str = "logs/runtime.log"

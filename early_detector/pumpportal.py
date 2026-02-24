@@ -75,8 +75,8 @@ async def pumpportal_worker(token_queue: asyncio.Queue, smart_wallets: list[str]
 
                 while True:
                     try:
-                        # 0. Clear recently_queued every 60s
-                        if asyncio.get_event_loop().time() - last_queued_clear > 60:
+                        # 0. Clear recently_queued every 10s (Reduced from 60s for V4.7 real-time responsiveness)
+                        if asyncio.get_event_loop().time() - last_queued_clear > 10:
                             recently_queued.clear()
                             last_queued_clear = asyncio.get_event_loop().time()
 

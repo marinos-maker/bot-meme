@@ -10,6 +10,7 @@ from early_detector.config import (
     TOP10_MAX_RATIO,
     MAX_TOP5_HOLDER_RATIO,
     SPIKE_THRESHOLD,
+    HOLDERS_MIN,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
 )
@@ -265,6 +266,8 @@ def passes_safety_filters(token: dict) -> bool:
     # 2. Supply Concentration (Fail-Closed V4.6 - with Early Grace)
     top10_ratio = token.get("top10_ratio")
     mcap = token.get("marketcap") or 0
+    address = token.get("address", "")
+    is_pump = address.endswith("pump")
     
     if top10_ratio is None or top10_ratio == 0:
         if mcap > 100000: # Only reject if it's already a larger cap and we STILL don't know holders
@@ -272,12 +275,25 @@ def passes_safety_filters(token: dict) -> bool:
             return False
         else:
             logger.info(f"Safety Grace: Top 10 concentration UNKNOWN for early cap ({mcap:,.0f}) — PROCEEDING")
-            # We don't return True yet, continue to other filters
-    elif top10_ratio > 95.0 and mcap > 200000:
-        # Only reject very large-cap tokens with extreme concentration.
-        # New pump tokens on bonding curve naturally have 100% top10 (bonding curve holds all supply).
-        # This is NORMAL and NOT a risk signal for tokens < $200K mcap.
-        logger.info(f"Safety: Top 10 concentration too high for large cap ({top10_ratio:.1f}% / mcap=${mcap:,.0f}) — REJECTED")
+    
+    # Dynamic Top 10 rejection
+    # If not on Pump.fun curve (or graduated), we enforce TOP10_MAX_RATIO
+    # Note: TOP10_MAX_RATIO is a scale 0.0-1.0, top10_ratio is 0-100
+    threshold_percent = TOP10_MAX_RATIO * 100
+    
+    if not is_pump or mcap > 100000:
+        if top10_ratio and top10_ratio > threshold_percent:
+            logger.info(f"Safety: High Top 10 concentration ({top10_ratio:.1f}% > {threshold_percent}%) for {token.get('symbol')} — REJECTED")
+            return False
+    elif top10_ratio and top10_ratio > 98.0 and mcap > 250000:
+            # Extreme case for pump tokens that should have graduated but haven't
+            logger.info(f"Safety: Extreme Top 10 for mid-cap Pump token ({top10_ratio:.1f}% / mcap=${mcap:,.0f}) — REJECTED")
+            return False
+
+    # 2b. Holder Count Filter
+    holders = token.get("holders") or 0
+    if holders < HOLDERS_MIN and mcap > 50000: # Only enforce for non-tiny tokens
+        logger.info(f"Safety: Too few holders ({holders} < {HOLDERS_MIN}) for {token.get('symbol')} — REJECTED")
         return False
 
     # 3. Behavioral Risk (Stricter for quality)
