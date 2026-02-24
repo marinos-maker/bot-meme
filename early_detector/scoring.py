@@ -134,13 +134,28 @@ def get_signal_threshold(instability_series: pd.Series,
                          percentile: float | None = None) -> float:
     """
     Dynamic threshold = percentile of current instability distribution.
-    Default is 95th percentile across all active tokens.
+    Default is 60th percentile across all active tokens in the batch.
+    
+    Guards:
+    - Minimum batch size of 3 required for a meaningful percentile.
+      With 1-2 tokens the percentile is trivially the token's own value.
+    - Absolute floor of 3.0: a token must have at least II=3.0 to qualify,
+      regardless of batch composition. This prevents epsilon-level signals.
     """
+    MIN_THRESHOLD = 3.0   # Absolute II floor — prevents near-zero noise signals
+    MIN_BATCH_SIZE = 3    # Below this, use MIN_THRESHOLD directly
+
     pct = percentile if percentile is not None else SIGNAL_PERCENTILE
     clean_series = instability_series.dropna()
     if clean_series.empty:
         return 99.0  # Fallback high threshold if no valid scores
-        
+
+    if len(clean_series) < MIN_BATCH_SIZE:
+        # Batch too small for a meaningful percentile — use hard floor
+        logger.info(f"Signal threshold (small batch={len(clean_series)}): {MIN_THRESHOLD:.3f} (floor)")
+        return MIN_THRESHOLD
+
     threshold = float(np.percentile(clean_series, pct * 100))
+    threshold = max(threshold, MIN_THRESHOLD)  # Never fall below the floor
     logger.info(f"Signal threshold (P{int(pct*100)}): {threshold:.3f}")
     return threshold
