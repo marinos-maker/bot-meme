@@ -524,23 +524,49 @@ async def send_telegram_alert(signal: dict) -> None:
     if name in ['Unknown Token', '']:
         name = f"Token {signal.get('address', 'UNKNOWN')[:8]}..."
 
+    # Fix potential zero division or None prices
+    price = signal.get('price') or 0.0
+    hard_stop = signal.get('hard_stop') or 0.0
+    tp_1 = signal.get('tp_1') or 0.0
+    
+    # Safe float formatting to avoid TypeErrors
+    ii = float(signal.get('instability_index', 0.0))
+    liq = float(signal.get('liquidity', 0.0))
+    mcap = float(signal.get('marketcap', 0.0))
+    conf = float(signal.get('confidence', 0.0))
+    k_size = float(signal.get('kelly_size', 0.0))
+    i_psi = float(signal.get('insider_psi', 0.0))
+    c_risk = float(signal.get('creator_risk', 0.0))
+    t10_ratio = float(signal.get('top10_ratio', 0.0))
+    d_score = signal.get('degen_score', 'N/A')
+    
+    # Clean up AI summary avoiding None output
+    ai_sum = signal.get('ai_summary')
+    if not ai_sum or ai_sum.strip() == "":
+        ai_sum = "Nessuna analisi AI disponibile"
+
     text = (
         f"🚨 <b>EARLY DETECTOR SIGNAL (V4.0)</b>\n\n"
         f"🪙 <b>{symbol}</b> — {name}\n"
         f"📍 <b>Address:</b> <code>{signal.get('address', 'UNKNOWN')}</code>\n"
-        f"📊 Instability Index: <code>{signal['instability_index']:.3f}</code>\n"
-        f"💰 Price: <code>${signal['price']:.8f}</code>\n"
-        f"💧 Liquidity: <code>${signal['liquidity']:,.0f}</code>\n"
-        f"📈 Market Cap: <code>${signal['marketcap']:,.0f}</code>\n"
+        f"📊 Instability Index: <code>{ii:.3f}</code>\n"
+        f"💰 Price: <code>${price:.10f}</code>\n"
+        f"💧 Liquidity: <code>${liq:,.0f}</code>\n"
+        f"📈 Market Cap: <code>${mcap:,.0f}</code>\n"
+        f"👥 Top 10 Holders: <code>{t10_ratio:.1f}%</code>\n"
         f"\n"
-        f"🎯 <b>Probability Score:</b> <code>{signal['confidence']:.1%}</code>\n"
-        f"⚖️ <b>Recommended Size:</b> <code>{signal['kelly_size']:.1%} of Wallet</code>\n"
-        f"🔥 <b>Insider Risk:</b> <code>{signal['insider_psi']:.2f}</code>\n"
+        f"🎯 <b>Probability Score:</b> <code>{conf:.1%}</code>\n"
+        f"⚖️ <b>Recommended Size:</b> <code>{k_size:.1%} of Wallet</code>\n"
+        f"🔥 <b>Insider Risk:</b> <code>{i_psi:.2f}</code>\n"
+        f"⚠️ <b>Creator Risk:</b> <code>{c_risk:.2f}</code>\n"
+        f"🤖 <b>AI Degen Score:</b> <code>{d_score}</code>\n"
         f"\n"
         f"🧠 <b>EXIT STRATEGY:</b>\n"
-        f"🛑 Hard Stop: <code>${signal.get('hard_stop', 0):.8f}</code> (-15%)\n"
-        f"💰 Target TP1: <code>${signal.get('tp_1', 0):.8f}</code> (+40%)\n"
+        f"🛑 Hard Stop: <code>${hard_stop:.10f}</code> (-15%)\n"
+        f"💰 Target TP1: <code>${tp_1:.10f}</code> (+40%)\n"
         f"🔄 Then: Trailing Stop 20%\n"
+        f"\n"
+        f"📋 <b>AI Summary:</b>\n<i>{ai_sum}</i>\n"
         f"\n"
         f"🔗 <a href='https://birdeye.so/token/{signal.get('address', '')}?chain=solana'>Birdeye</a>"
         f" | <a href='https://dexscreener.com/solana/{signal.get('address', '')}'>DexScreener</a>"

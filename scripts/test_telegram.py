@@ -25,7 +25,11 @@ async def test_telegram():
         "insider_psi": 0.12,
         "address": "So11111111111111111111111111111111111111112", # SOL for the links
         "hard_stop": 0.00003882,
-        "tp_1": 0.00006394
+        "tp_1": 0.00006394,
+        "creator_risk": 0.05,
+        "top10_ratio": 12.5,
+        "degen_score": 88,
+        "ai_summary": "Ottimo slancio iniziale, basso rischio di creator rug e insider, potenziale breakout parabolico in atto."
     }
 
     print("Sending test signal to Telegram...")
