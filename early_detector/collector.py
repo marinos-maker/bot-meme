@@ -8,6 +8,7 @@ from loguru import logger
 from early_detector.config import (
     DEXSCREENER_API_URL, PUMPPORTAL_API_KEY
 )
+from early_detector.helius_client import get_token_largest_accounts, get_asset
 from early_detector.cache import cache
 
 async def fetch_dex_metadata(session: aiohttp.ClientSession, token_address: str) -> dict | None:
@@ -47,6 +48,40 @@ async def fetch_jupiter_price(session: aiohttp.ClientSession, token_address: str
     except Exception as e:
         return None
 
+# ── Helius RPC (Holders & Metadata) ───────────────────────────────────────────
+
+async def fetch_helius_metrics(session: aiohttp.ClientSession, token_address: str) -> dict:
+    """Fetch Top10 Holders Ratio and Creator info using Helius RPC."""
+    res = {}
+    
+    # 1. Fetch Top 10 Ratio
+    try:
+        accounts = await get_token_largest_accounts(session, token_address)
+        if accounts:
+            top_10 = sum(float(acc.get("amount", 0)) for acc in accounts[:10])
+            # For accurate total supply we would need getTokenSupply, but taking the sum of largest accounts
+            # is a good approximation for meme coins at launch since supply is usually concentrated.
+            total_supply = sum(float(acc.get("amount", 0)) for acc in accounts)
+            if total_supply > 0:
+                res["top10_ratio"] = min((top_10 / total_supply) * 100, 100.0)
+    except Exception as e:
+        logger.debug(f"Helius RPC holders error for {token_address[:8]}: {e}")
+        
+    # 2. Fetch Creator via DAS API
+    try:
+        asset = await get_asset(session, token_address)
+        if asset:
+            # First check if there is a creator structure in DAS
+            creators = asset.get("creators", [])
+            if creators:
+                res["creator"] = creators[0].get("address")
+            else:
+                # Fallback to token info update authority
+                res["creator"] = asset.get("token_info", {}).get("update_authority")
+    except Exception as e:
+        logger.debug(f"Helius DAS meta error for {token_address[:8]}: {e}")
+        
+    return res
 
 # ── DexScreener ───────────────────────────────────────────────────────────────
 
@@ -145,6 +180,17 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
         if curr_liq < 100 and mcap > 0:
             metrics["liquidity"] = mcap * 0.18
             logger.debug(f"Applied virtual liquidity for {token_address[:8]}: ${metrics['liquidity']:,.0f}")
+
+    # Integrate Helius metrics if available ONLY FOR VIABLE TOKENS
+    # (to save the 1,000,000 requests/month limit)
+    h_metrics = {}
+    if metrics.get("price", 0) > 0 and metrics.get("liquidity", 0) > 200:
+        h_metrics = await fetch_helius_metrics(session, token_address)
+        if h_metrics:
+            if "top10_ratio" in h_metrics:
+                metrics["top10_ratio"] = h_metrics["top10_ratio"]
+            if "creator" in h_metrics:
+                metrics["creator_address"] = h_metrics["creator"]
 
     # Initialize missing fields that were previously provided by Helius/Birdeye
     # to avoid crashes in feature calculation

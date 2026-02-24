@@ -1689,8 +1689,13 @@
                     <div style="color:var(--text-secondary)">$${formatNum(s.marketcap)} <span style="font-size:10px;color:var(--text-muted)">MCap</span></div>
                 </td>
                 <td class="mono">
-                    <div style="color:${s.insider_psi > 0.5 ? 'var(--red)' : 'var(--text-secondary)'}; margin-bottom:2px;">${(s.insider_psi).toFixed(2)} <span style="font-size:10px;color:var(--text-muted)">Ins.</span> | <span style="color:${s.creator_risk > 0.5 ? 'var(--red)' : 'var(--text-secondary)'};">${(s.creator_risk || 0).toFixed(2)}</span> <span style="font-size:10px;color:var(--text-muted)">Cr. PSI</span></div>
-                    <div style="color:var(--yellow)">${(s.top10_ratio || 0).toFixed(1)}% <span style="font-size:10px;color:var(--text-muted)">Top10</span></div>
+                    <div style="color:${s.insider_psi > 0.5 ? 'var(--red)' : 'var(--text-secondary)'}; margin-bottom:2px;">
+                        ${s.insider_psi > 0 ? (s.insider_psi).toFixed(2) : 'N/A'} <span style="font-size:10px;color:var(--text-muted)">Ins.</span> | 
+                        <span style="color:${s.creator_risk > 0.5 ? 'var(--red)' : 'var(--text-secondary)'};">${s.creator_risk > 0 ? (s.creator_risk).toFixed(2) : 'N/A'}</span> <span style="font-size:10px;color:var(--text-muted)">Cr. PSI</span>
+                    </div>
+                    <div style="color:var(--yellow)">
+                        ${s.top10_ratio > 0 ? (s.top10_ratio).toFixed(1) + '%' : 'N/A'} <span style="font-size:10px;color:var(--text-muted)">Top10</span>
+                    </div>
                 </td>
                 <td class="mono">
                     <div style="color:var(--green); margin-bottom:2px;">${(s.confidence * 100).toFixed(0)}% <span style="font-size:10px;color:var(--text-muted)">Win</span></div>

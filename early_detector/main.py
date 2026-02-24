@@ -246,8 +246,9 @@ async def process_token_to_features(session, tok) -> dict | None:
         narrative = NarrativeManager.classify(name or "", symbol or "")
             
         # Re-upsert with potentially better name/symbol and narrative
-        token_id = await upsert_token(address, name, symbol, narrative=narrative)
-        logger.debug(f"upsert_token called for {address[:8]} with name={name}, symbol={symbol}")
+        creator_address = metrics.get("creator_address")
+        token_id = await upsert_token(address, name, symbol, narrative=narrative, creator_address=creator_address)
+        logger.debug(f"upsert_token called for {address[:8]} with name={name}, symbol={symbol}, creator={creator_address}")
         
         # History
         history = await get_recent_metrics(token_id, minutes=30)
