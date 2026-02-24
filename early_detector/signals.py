@@ -163,17 +163,16 @@ def passes_trigger(token: dict, threshold: float) -> bool:
         logger.info(f"Trigger rejected: Extreme Volatility expansion (vol_shift={vol_shift:.2f}) for {token.get('symbol')}")
         return False
     
-    # 4. Condition: Liquidity check (More flexible)
-    # Allow low reported liquidity if II is high AND MCAP is reasonable
+    # 4. Condition: Liquidity check (Stricter)
     if liq < LIQUIDITY_MIN:
         # CRITICAL: If liquidity is literally 0 or negative, REJECT immediately.
         if liq <= 0:
             logger.info(f"Trigger rejected: ZERO Liquidity for {token.get('symbol') or token.get('address')}")
             return False
 
-        # Relaxed exception: allow low liquidity if II is very high and it's a new small cap
-        if ii > (threshold * 1.5) and mcap < 400000 and liq >= 150:
-            logger.info(f"Trigger exception: High II ({ii:.3f}) for new token {token.get('symbol') or token.get('address')} with acceptable liq (Liq: {liq:.0f})")
+        # Reduced exception: allow slightly lower liquidity only if II is very high and it's a very small cap
+        if ii > (threshold * 2.0) and mcap < 200000 and liq >= 500:
+            logger.info(f"Trigger exception: VERY High II ({ii:.3f}) for new token {token.get('symbol') or token.get('address')} with minimum acceptable liq (Liq: {liq:.0f})")
         else:
             logger.info(f"Trigger rejected: Low Liquidity ({liq:.0f} < {LIQUIDITY_MIN}) for {token.get('symbol') or token.get('address')}")
             return False
@@ -281,21 +280,21 @@ def passes_safety_filters(token: dict) -> bool:
         logger.info(f"Safety: Top 10 concentration too high for large cap ({top10_ratio:.1f}% / mcap=${mcap:,.0f}) — REJECTED")
         return False
 
-    # 3. Behavioral Risk (More flexible for meme coins)
+    # 3. Behavioral Risk (Stricter for quality)
     insider_psi = (token.get("insider_psi") or 0.0)
-    if insider_psi > 0.85: # Increased to 0.85
+    if insider_psi > 0.65: # Reduced from 0.85 to 0.65
         logger.info(f"Safety: High Insider Probability ({insider_psi:.2f}) — REJECTED")
         return False
         
     creator_risk = (token.get("creator_risk_score") or 0.1)
-    if creator_risk > 0.75: # Increased to 0.75
+    if creator_risk > 0.60: # Reduced from 0.75 to 0.60
         logger.info(f"Safety: High Creator Risk ({creator_risk:.2f}) — REJECTED")
         return False
 
-    # 4. Momentum Spike check (More flexible)
+    # 4. Momentum Spike check (Stricter)
     price_change_5m = (token.get("price_change_5m") or 0.0)
     from early_detector.config import SPIKE_THRESHOLD
-    if price_change_5m and price_change_5m >= 15.0: # Increased to 15x
+    if price_change_5m and price_change_5m >= 5.0: # Reduced from 15x to 5x
         logger.info(f"Safety: Price Spike detected ({price_change_5m:.2f}x) — REJECTED")
         return False
         
@@ -307,9 +306,9 @@ def passes_quality_gate(token_data: dict, ai_result: dict) -> bool:
     Final Quality Check (V4.6 Quality & Stability):
     - Higher bar for entry to avoid 'noise' signals.
     """
-    # 1. Lowered Liquidity Floor for Early Detection (V4.7)
+    # 1. Higher Liquidity Floor (V4.8)
     liq = token_data.get("liquidity") or 0
-    if liq < 100:
+    if liq < 500: # Increased from 100 to 500
         logger.info(f"Quality Gate: REJECTED {token_data.get('symbol')} - Liquidity too low (${liq:.0f})")
         return False
 
@@ -321,10 +320,10 @@ def passes_quality_gate(token_data: dict, ai_result: dict) -> bool:
         now_ms = time.time() * 1000
         age_min = (now_ms - created_at) / (1000 * 60)
         
-        # If less than 15 minutes old, require DECENT degen score
+        # If less than 15 minutes old, require BETTER degen score
         if age_min < 15:
             degen_score = ai_result.get("degen_score") or token_data.get("degen_score") or 0
-            if degen_score < 45:
+            if degen_score < 55: # Increased from 45 to 55
                 logger.info(f"Quality Gate: REJECTED {token_data.get('symbol')} - Too new ({age_min:.1f}m) and low AI score ({degen_score})")
                 return False
                 

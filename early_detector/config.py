@@ -33,12 +33,12 @@ TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # ── Trading Filters ──────────────────────────────────────────────────────────
-LIQUIDITY_MIN: float = float(os.getenv("LIQUIDITY_MIN", "500"))  # Early pump tokens have $200-400 liq
+LIQUIDITY_MIN: float = float(os.getenv("LIQUIDITY_MIN", "1500"))  # Increased from 500 for better quality
 MCAP_MAX: float = float(os.getenv("MCAP_MAX", "10000000"))
-TOP10_MAX_RATIO: float = float(os.getenv("TOP10_MAX_RATIO", "0.60"))  # More flexible for meme coins
+TOP10_MAX_RATIO: float = float(os.getenv("TOP10_MAX_RATIO", "0.50"))  # Stricter: 50% instead of 60%
 
 # ── Scoring ───────────────────────────────────────────────────────────────────
-SIGNAL_PERCENTILE: float = float(os.getenv("SIGNAL_PERCENTILE", "0.60"))  # More aggressive threshold
+SIGNAL_PERCENTILE: float = float(os.getenv("SIGNAL_PERCENTILE", "0.70"))  # More selective: 70th percentile
 
 # ── Instability Index Weights (default, can be overridden by optimizer) ──────
 WEIGHT_SA: float = 2.0        # Stealth Accumulation
@@ -49,10 +49,10 @@ WEIGHT_VI: float = 2.0        # Volume Intensity (Turnover)
 WEIGHT_SELL: float = 2.0      # Sell Pressure (subtracted)
 
 # ── Smart Wallet Thresholds ───────────────────────────────────────────────────
-# Opzione C: Criteri più flessibili per identificare più smart wallet
-SW_MIN_ROI: float = 1.0      # Da 1.1 a 1.0 (ROI > 1.0x)
-SW_MIN_TRADES: int = 1       # Da 2 a 1 (Trade >= 1)
-SW_MIN_WIN_RATE: float = 0.25 # Mantenere 25%
+# Opzione C: Criteri più selettivi per identificare smart wallet di qualità
+SW_MIN_ROI: float = 1.3      # Da 1.0 a 1.3 (ROI > 1.3x)
+SW_MIN_TRADES: int = 2       # Da 1 a 2
+SW_MIN_WIN_RATE: float = 0.35 # Da 0.25 a 0.35
 
 # ── Timing ────────────────────────────────────────────────────────────────────
 SCAN_INTERVAL: int = int(os.getenv("SCAN_INTERVAL", "15"))  # Reduced for V4.0 latency

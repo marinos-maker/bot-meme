@@ -142,7 +142,7 @@ def get_signal_threshold(instability_series: pd.Series,
     - Absolute floor of 3.0: a token must have at least II=3.0 to qualify,
       regardless of batch composition. This prevents epsilon-level signals.
     """
-    MIN_THRESHOLD = 3.0   # Absolute II floor — prevents near-zero noise signals
+    MIN_THRESHOLD = 4.5   # Increased from 3.0 — reduces near-zero noise signals
     MIN_BATCH_SIZE = 3    # Below this, use MIN_THRESHOLD directly
 
     pct = percentile if percentile is not None else SIGNAL_PERCENTILE
