@@ -33,7 +33,7 @@ TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # ── Trading Filters ──────────────────────────────────────────────────────────
-LIQUIDITY_MIN: float = float(os.getenv("LIQUIDITY_MIN", "250"))  # Early pump tokens have $200-400 liq
+LIQUIDITY_MIN: float = float(os.getenv("LIQUIDITY_MIN", "500"))  # Early pump tokens have $200-400 liq
 MCAP_MAX: float = float(os.getenv("MCAP_MAX", "10000000"))
 TOP10_MAX_RATIO: float = float(os.getenv("TOP10_MAX_RATIO", "0.60"))  # More flexible for meme coins
 
