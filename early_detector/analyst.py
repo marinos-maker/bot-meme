@@ -145,10 +145,11 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         
         CRITICAL RULES:
         1. If Mint or Freeze is ENABLED, Verdict MUST be AVOID.
-        2. If 'Official Socials Provided' is NO and 'Creator Reputation Risk' > 0.6, penalize score severely.
+        2. If 'Official Socials Provided' is NO, this is NORMAL for new Pump.fun launches. Do not penalize heavily unless 'Creator Reputation Risk' > 0.6.
         3. If 'Live Web Sentiment' looks overly bot-spammed, warn about it.
-        4. If Top 10 > 50%, be extremely critical.
-        5. You MUST explicitly mention the presence or absence of Twitter Socials / Web Sentiment in your 'risks' or 'summary', no matter how bad the other metrics are.
+        4. If Top 10 > 75%, it is slightly risky, BUT remember this is a bonding curve launch so high concentration is NORMAL initially. DO NOT auto-AVOID solely based on Top 10 unless it is > 90%.
+        5. You MUST explicitly mention the presence or absence of Twitter Socials / Web Sentiment in your 'risks' or 'summary'.
+        6. A 'degen_score' of 50-70 is for decent momentum. 70-100 is for exceptional alpha. Don't be afraid to give 60+ if Instability Index (II) > 10.
         
         Return ONLY a JSON object (no markdown, no backticks):
         {{
@@ -179,7 +180,7 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.6,
-                    max_tokens=500
+                    max_tokens=1000
                 )
                 if response.choices and response.choices[0].message.content:
                     response_text = response.choices[0].message.content
@@ -247,11 +248,19 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
         
         # 4. Parse JSON from response text (Robust)
         text = response_text.strip()
+        
+        # Remove any Markdown code block tags
+        if "```json" in text:
+            text = text.split("```json")[-1]
         if "```" in text:
-            start = text.find("{")
-            end = text.rfind("}")
-            if start != -1 and end != -1:
-                text = text[start:end+1]
+            text = text.split("```")[0]
+            
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1:
+            text = text[start:end+1]
+        elif start != -1:
+            text = text[start:] + "\n}"
         
         try:
             result = json.loads(text)
@@ -259,7 +268,16 @@ async def analyze_token_signal(token_data: dict, history: list) -> dict:
             import re
             match = re.search(r'\{.*\}', text, re.DOTALL)
             if match:
-                result = json.loads(match.group(0))
+                try:
+                    result = json.loads(match.group(0))
+                except:
+                    # Very dirty AI response with syntax error. We fallback to manual regex parsing.
+                    v = re.search(r'"verdict"\s*:\s*"?(BUY|WAIT|AVOID)"?', text, re.IGNORECASE)
+                    d = re.search(r'"degen_score"\s*:\s*(\d+)', text, re.IGNORECASE)
+                    if v and d:
+                        result = {"verdict": v.group(1).upper(), "degen_score": int(d.group(1)), "summary": "Recovered from syntax error JSON."}
+                    else:
+                        raise ValueError(f"Could not parse JSON from AI response: {text[:50]}...")
             else:
                 raise ValueError(f"Could not parse JSON from AI response: {text[:50]}...")
                 
@@ -334,99 +352,73 @@ def calculate_quantitative_score(token_data: dict, history: list) -> dict:
     opportunity_bonus = 0
     
     # 1. Liquidity Score (0-20 points)
-    if liq >= 5000:  # High liquidity
+    if liq >= 3000:  # High for early token
         base_score += 20
-    elif liq >= 2000:  # Medium liquidity
+    elif liq >= 1000:  # Good early liquidity
         base_score += 15
-    elif liq >= 1000:  # Low liquidity
+    elif liq >= 500:  # Valid liquidity
         base_score += 10
-    elif liq >= 500:   # Very low liquidity
-        base_score += 5
-    else:              # No liquidity
-        base_score += 0
-        risk_penalty += 20
+    else:
+        risk_penalty += 10
     
     # 2. Liquidity/MCap Ratio Score (0-15 points)
-    if liq_mcap_ratio >= 0.2:  # Very good ratio
+    if liq_mcap_ratio >= 0.15:
         base_score += 15
-    elif liq_mcap_ratio >= 0.1:  # Good ratio
+    elif liq_mcap_ratio >= 0.08:
         base_score += 10
-    elif liq_mcap_ratio >= 0.05:  # Fair ratio
-        base_score += 5
-    else:  # Poor ratio
-        risk_penalty += 10
+    else: 
+        risk_penalty += 5
     
     # 3. Holder Growth Score (0-15 points)
-    if h_growth >= 50:  # Explosive growth
+    if h_growth >= 30:
         base_score += 15
         opportunity_bonus += 10
-    elif h_growth >= 20:  # Good growth
+    elif h_growth >= 10:
         base_score += 10
-    elif h_growth >= 5:   # Moderate growth
+    elif h_growth > 0:
         base_score += 5
-    elif h_growth < 0:    # Declining holders
-        risk_penalty += 10
     
-    # 4. Instability Index Score (0-20 points)
-    if instability >= 10:  # Very high instability
-        base_score += 20
-        opportunity_bonus += 15
-    elif instability >= 5:  # High instability
+    # 4. Instability Index Score (0-25 points)
+    if instability >= 15:
+        base_score += 25
+        opportunity_bonus += 20
+    elif instability >= 5:
         base_score += 15
         opportunity_bonus += 10
-    elif instability >= 1:  # Moderate instability
+    elif instability >= 1:
         base_score += 10
-    elif instability >= 0.1:  # Low instability
-        base_score += 5
-    else:  # No instability
-        risk_penalty += 5
     
     # 5. Volume/Velocity Score (0-15 points)
-    if velocity >= 50:  # Very high velocity
+    if velocity >= 30:
         base_score += 15
         opportunity_bonus += 10
-    elif velocity >= 20:  # High velocity
+    elif velocity >= 10:
         base_score += 10
-    elif velocity >= 5:   # Moderate velocity
-        base_score += 5
-    else:  # Low velocity
-        risk_penalty += 5
-    
+        
     # 6. Buy/Sell Ratio Score (0-10 points)
-    if buy_sell_ratio >= 3:  # Strong buying pressure
+    if buy_sell_ratio >= 1.5:
         base_score += 10
-    elif buy_sell_ratio >= 2:  # Good buying pressure
-        base_score += 7
-    elif buy_sell_ratio >= 1.5:  # Moderate buying pressure
+    elif buy_sell_ratio >= 1.0:
         base_score += 5
-    elif buy_sell_ratio < 0.5:  # Strong selling pressure
+    elif buy_sell_ratio < 0.6:
         risk_penalty += 10
     
     # 7. Insider Probability Penalty (0-20 points)
-    if insider_psi >= 0.8:  # Very high insider probability
-        risk_penalty += 20
-    elif insider_psi >= 0.6:  # High insider probability
+    if insider_psi >= 0.7:
         risk_penalty += 15
-    elif insider_psi >= 0.4:  # Moderate insider probability
-        risk_penalty += 10
-    elif insider_psi >= 0.2:  # Low insider probability
+    elif insider_psi >= 0.4:
         risk_penalty += 5
     
     # 8. Top 10 Concentration Penalty (0-15 points)
-    if top10 >= 0.7:  # Very high concentration
+    # Early coins naturally have high Top10. Don't heavily penalize unless > 85%
+    if top10 >= 0.90:
         risk_penalty += 15
-    elif top10 >= 0.5:  # High concentration
-        risk_penalty += 10
-    elif top10 >= 0.3:  # Moderate concentration
+    elif top10 >= 0.85:
         risk_penalty += 5
     
     # 9. Creator Risk Penalty (0-10 points)
-    if creator_risk >= 0.8:  # Very high risk
+    if creator_risk >= 0.7:
         risk_penalty += 10
-    elif creator_risk >= 0.6:  # High risk
-        risk_penalty += 7
-    elif creator_risk >= 0.4:  # Moderate risk
-        risk_penalty += 5
     
     # 10. Authority Checks (Critical penalties)
     if mint_auth:  # Mint authority enabled
