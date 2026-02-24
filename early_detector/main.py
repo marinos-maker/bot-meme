@@ -361,6 +361,7 @@ async def process_token_to_features(session, tok) -> dict | None:
         features["marketcap"] = metrics.get("marketcap") or 0
         features["top10_ratio"] = metrics.get("top10_ratio")
         features["insider_psi"] = token_insider_psi
+        metrics["insider_psi"] = token_insider_psi
         
         # ── Applicazione Reale del Creator Risk Score ──
         from early_detector.db import get_token_creator, get_creator_stats

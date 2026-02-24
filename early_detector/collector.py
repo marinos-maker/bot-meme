@@ -51,36 +51,51 @@ async def fetch_jupiter_price(session: aiohttp.ClientSession, token_address: str
 # ── Helius RPC (Holders & Metadata) ───────────────────────────────────────────
 
 async def fetch_helius_metrics(session: aiohttp.ClientSession, token_address: str) -> dict:
-    """Fetch Top10 Holders Ratio and Creator info using Helius RPC."""
-    res = {}
+    """
+    Fetch Top10 Holders Ratio and Creator info using Helius RPC.
     
-    # 1. Fetch Top 10 Ratio
-    try:
-        accounts = await get_token_largest_accounts(session, token_address)
-        if accounts:
-            top_10 = sum(float(acc.get("amount", 0)) for acc in accounts[:10])
-            # For accurate total supply we would need getTokenSupply, but taking the sum of largest accounts
-            # is a good approximation for meme coins at launch since supply is usually concentrated.
-            total_supply = sum(float(acc.get("amount", 0)) for acc in accounts)
-            if total_supply > 0:
-                res["top10_ratio"] = min((top_10 / total_supply) * 100, 100.0)
-    except Exception as e:
-        logger.debug(f"Helius RPC holders error for {token_address[:8]}: {e}")
-        
-    # 2. Fetch Creator via DAS API
+    For Pump.fun bonding-curve tokens (.endswith 'pump'):
+    - Top10 is naturally 100% (bonding curve holds all supply) — no API call needed.
+    - getAsset is attempted but may return {} if the token is too new to be indexed.
+    
+    For graduated/established tokens:
+    - getTokenLargestAccounts is used to compute real Top10 ratio.
+    - getAsset is used for creator information.
+    """
+    res = {}
+
+    if token_address.endswith("pump"):
+        # Bonding curve tokens: the pump bonding curve contract holds ~100% of supply.
+        # This is NORMAL and expected — no need to waste a Helius credit querying it.
+        res["top10_ratio"] = 100.0
+        logger.debug(f"Helius: {token_address[:8]} is a pump BC token → top10_ratio=100% (expected)")
+    else:
+        # Graduated / established token — query real holder distribution
+        try:
+            accounts = await get_token_largest_accounts(session, token_address)
+            if accounts:
+                top_10 = sum(float(acc.get("amount", 0)) for acc in accounts[:10])
+                total_supply = sum(float(acc.get("amount", 0)) for acc in accounts)
+                if total_supply > 0:
+                    res["top10_ratio"] = min((top_10 / total_supply) * 100, 100.0)
+                    logger.debug(f"Helius: {token_address[:8]} top10_ratio={res['top10_ratio']:.1f}%")
+        except Exception as e:
+            logger.debug(f"Helius holders error for {token_address[:8]}: {e}")
+
+    # Always try getAsset for creator info (silently skipped if token not indexed yet)
     try:
         asset = await get_asset(session, token_address)
         if asset:
-            # First check if there is a creator structure in DAS
             creators = asset.get("creators", [])
             if creators:
                 res["creator"] = creators[0].get("address")
             else:
-                # Fallback to token info update authority
                 res["creator"] = asset.get("token_info", {}).get("update_authority")
+            if res.get("creator"):
+                logger.debug(f"Helius: {token_address[:8]} creator={res['creator'][:8]}...")
     except Exception as e:
         logger.debug(f"Helius DAS meta error for {token_address[:8]}: {e}")
-        
+
     return res
 
 # ── DexScreener ───────────────────────────────────────────────────────────────

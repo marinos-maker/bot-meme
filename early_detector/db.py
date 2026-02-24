@@ -125,7 +125,8 @@ async def get_creator_tokens(creator_address: str) -> list[dict]:
                EXTRACT(EPOCH FROM (NOW() - created_at))/3600 AS hours_since_creation
         FROM tokens 
         WHERE creator_address = $1
-        """
+        """,
+        creator_address
     )
     return [dict(r) for r in rows]
 

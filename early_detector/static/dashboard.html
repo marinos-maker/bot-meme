@@ -1787,7 +1787,7 @@
             }
 
             // Update Top Picks in Overview
-            const topSignals = data.signals.filter(s => (s.degen_score >= 50 || s.instability_index > 1.5));
+            const topSignals = data.signals.filter(s => (s.degen_score >= 15 || s.instability_index > 1.5));
             renderTopPicks(topSignals);
 
             tbody.innerHTML = filteredSignals.map(renderSignalRow).join('');
@@ -1830,7 +1830,7 @@
                 }
 
                 // Update Top Picks in Overview
-                const topSignals = data.signals.filter(s => (s.degen_score >= 50 || s.instability_index > 1.5));
+                const topSignals = data.signals.filter(s => (s.degen_score >= 15 || s.instability_index > 1.5));
                 renderTopPicks(topSignals);
 
                 tbody.innerHTML = filteredSignals.map(renderSignalRow).join('');
