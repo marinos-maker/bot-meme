@@ -148,10 +148,8 @@ def passes_trigger(token: dict, threshold: float) -> bool:
     if ii == 0 and threshold == 0:
         return False
         
-    # HARD FLOOR: Even if threshold is 0.0000, we need actual momentum
-    if ii < 10.0:
-        logger.info(f"Trigger rejected: II too low for actual momentum ({ii:.3f} < 10.0) for {token.get('symbol')}")
-        return False
+    # NOTE: We do NOT add a hard floor here — new pump tokens legitimately start at II=0
+    # and build up momentum over cycles. The dynamic threshold above handles minimum II.
     
     # 2. Condition: dII/dt > -2.5 (More permissive momentum)
     # Catch tokens even if they are stabilizing after a peak
@@ -173,8 +171,8 @@ def passes_trigger(token: dict, threshold: float) -> bool:
             logger.info(f"Trigger rejected: ZERO Liquidity for {token.get('symbol') or token.get('address')}")
             return False
 
-        # Relaxed exception: allow low liquidity (but > $800) if II is very high and it's a new small cap
-        if ii > (threshold * 1.5) and mcap < 400000 and liq >= 800:
+        # Relaxed exception: allow low liquidity if II is very high and it's a new small cap
+        if ii > (threshold * 1.5) and mcap < 400000 and liq >= 150:
             logger.info(f"Trigger exception: High II ({ii:.3f}) for new token {token.get('symbol') or token.get('address')} with acceptable liq (Liq: {liq:.0f})")
         else:
             logger.info(f"Trigger rejected: Low Liquidity ({liq:.0f} < {LIQUIDITY_MIN}) for {token.get('symbol') or token.get('address')}")
@@ -276,8 +274,11 @@ def passes_safety_filters(token: dict) -> bool:
         else:
             logger.info(f"Safety Grace: Top 10 concentration UNKNOWN for early cap ({mcap:,.0f}) — PROCEEDING")
             # We don't return True yet, continue to other filters
-    elif top10_ratio > 75.0: # Increased to 75% as many legit meme coins are concentrated early
-        logger.info(f"Safety: Top 10 concentration too high ({top10_ratio:.1f}%) — REJECTED")
+    elif top10_ratio > 95.0 and mcap > 200000:
+        # Only reject very large-cap tokens with extreme concentration.
+        # New pump tokens on bonding curve naturally have 100% top10 (bonding curve holds all supply).
+        # This is NORMAL and NOT a risk signal for tokens < $200K mcap.
+        logger.info(f"Safety: Top 10 concentration too high for large cap ({top10_ratio:.1f}% / mcap=${mcap:,.0f}) — REJECTED")
         return False
 
     # 3. Behavioral Risk (More flexible for meme coins)

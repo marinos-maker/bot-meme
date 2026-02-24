@@ -1774,6 +1774,11 @@
             document.getElementById('signalsCount').textContent =
                 `${filteredSignals.length} signal(s) ${showTopOnly ? '(Top Rated)' : ''}`;
 
+            // ALWAYS update Top Picks from the full signal list (not filtered),
+            // regardless of whether filteredSignals is empty.
+            const topSignals = data.signals.filter(s => (s.degen_score >= 15 || s.instability_index > 1.5));
+            renderTopPicks(topSignals);
+
             if (filteredSignals.length === 0) {
                 tbody.innerHTML = `
                 <tr><td colspan="12">
@@ -1785,10 +1790,6 @@
                 </td></tr>`;
                 return;
             }
-
-            // Update Top Picks in Overview
-            const topSignals = data.signals.filter(s => (s.degen_score >= 15 || s.instability_index > 1.5));
-            renderTopPicks(topSignals);
 
             tbody.innerHTML = filteredSignals.map(renderSignalRow).join('');
         }
