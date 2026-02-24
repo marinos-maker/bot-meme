@@ -102,7 +102,8 @@ async def api_signals(limit: int = 50):
         SELECT s.id, s.timestamp, s.instability_index, s.entry_price,
                s.liquidity, s.marketcap, s.confidence, s.kelly_size,
                s.insider_psi, s.creator_risk, s.degen_score, s.ai_summary, s.ai_analysis,
-               t.address, t.name, t.symbol
+               t.address, t.name, t.symbol,
+               (SELECT top10_ratio FROM token_metrics_timeseries m WHERE m.token_id = s.token_id ORDER BY m.timestamp DESC LIMIT 1) as top10_ratio
         FROM signals s
         JOIN tokens t ON t.id = s.token_id
         ORDER BY s.timestamp DESC
@@ -151,6 +152,7 @@ async def api_signals(limit: int = 50):
             "kelly_size": kelly,
             "insider_psi": psi,
             "creator_risk": risk,
+            "top10_ratio": float(r.get("top10_ratio") or 0),
             "degen_score": r["degen_score"],
             "ai_summary": r["ai_summary"],
             "ai_analysis": ai_analysis,
@@ -172,7 +174,8 @@ async def api_signals_recent(minutes: int = 10):
         SELECT s.id, s.timestamp, s.instability_index, s.entry_price,
                s.liquidity, s.marketcap, s.confidence, s.kelly_size,
                s.insider_psi, s.creator_risk, s.degen_score, s.ai_summary, s.ai_analysis,
-               t.address, t.name, t.symbol
+               t.address, t.name, t.symbol,
+               (SELECT top10_ratio FROM token_metrics_timeseries m WHERE m.token_id = s.token_id ORDER BY m.timestamp DESC LIMIT 1) as top10_ratio
         FROM signals s
         JOIN tokens t ON t.id = s.token_id
         WHERE s.timestamp > NOW() - INTERVAL $1
@@ -221,6 +224,7 @@ async def api_signals_recent(minutes: int = 10):
             "kelly_size": kelly,
             "insider_psi": psi,
             "creator_risk": risk,
+            "top10_ratio": float(r["top10_ratio"] or 0),
             "degen_score": r["degen_score"],
             "ai_summary": r["ai_summary"],
             "ai_analysis": ai_analysis,

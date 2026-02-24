@@ -65,6 +65,12 @@ async def upsert_token(address: str, name: str | None = None,
     return str(row["id"])
 
 
+async def get_token_creator(address: str) -> str | None:
+    """Retrieve the creator address for a given token address."""
+    pool = await get_pool()
+    return await pool.fetchval("SELECT creator_address FROM tokens WHERE address = $1", address)
+
+
 # ── Creator helpers ───────────────────────────────────────────────────────────
 
 async def upsert_creator_stats(creator_address: str, stats: dict) -> None:
@@ -94,6 +100,34 @@ async def get_creator_stats(creator_address: str) -> dict | None:
         creator_address
     )
     return dict(row) if row else None
+
+
+async def get_creators_to_analyze() -> list[str]:
+    """Retrieve creators who launched tokens at least 2 hours ago for rug analysis."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT DISTINCT creator_address 
+        FROM tokens 
+        WHERE creator_address IS NOT NULL 
+          AND created_at < NOW() - INTERVAL '2 hours'
+        """
+    )
+    return [r["creator_address"] for r in rows]
+
+
+async def get_creator_tokens(creator_address: str) -> list[dict]:
+    """Retrieve all tokens launched by a creator with their age in hours."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT address, 
+               EXTRACT(EPOCH FROM (NOW() - created_at))/3600 AS hours_since_creation
+        FROM tokens 
+        WHERE creator_address = $1
+        """
+    )
+    return [dict(r) for r in rows]
 
 
 # ── Metrics helpers ───────────────────────────────────────────────────────────

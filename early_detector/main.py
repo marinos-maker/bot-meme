@@ -29,6 +29,7 @@ from early_detector.narrative import NarrativeManager
 from early_detector.trader import execute_buy
 from early_detector.tp_sl_monitor import tp_sl_worker
 from early_detector.pumpportal import pumpportal_worker
+from early_detector.creator_monitor import creator_performance_job
 
 # ── Logging Setup ─────────────────────────────────────────────────────────────
 logger.add(LOG_FILE, rotation=LOG_ROTATION, level=LOG_LEVEL,
@@ -359,7 +360,20 @@ async def process_token_to_features(session, tok) -> dict | None:
         features["marketcap"] = metrics.get("marketcap") or 0
         features["top10_ratio"] = metrics.get("top10_ratio")
         features["insider_psi"] = token_insider_psi
-        features["creator_risk_score"] = metrics.get("creator_risk_score")
+        
+        # ── Applicazione Reale del Creator Risk Score ──
+        from early_detector.db import get_token_creator, get_creator_stats
+        creator_risk_score = 0.0
+        creator_address = await get_token_creator(address)
+        if creator_address:
+            creator_stats = await get_creator_stats(creator_address)
+            if creator_stats:
+                # Il "Rug Ratio" storico diventa il punteggio di rischio effettivo usato dall'algoritmo
+                creator_risk_score = float(creator_stats.get("rug_ratio", 0.0))
+        
+        metrics["creator_risk_score"] = creator_risk_score
+        features["creator_risk_score"] = creator_risk_score
+        
         features["mint_authority"] = metrics.get("mint_authority")
         features["freeze_authority"] = metrics.get("freeze_authority")
         
@@ -427,7 +441,8 @@ async def run() -> None:
         consumers = [asyncio.create_task(processor_worker_batch(i, session)) for i in range(4)]
         cron_jobs = [
             asyncio.create_task(update_wallet_profiles_job(session)),
-            asyncio.create_task(db_maintenance_job())
+            asyncio.create_task(db_maintenance_job()),
+            asyncio.create_task(creator_performance_job(session))
         ]
         monitors = [asyncio.create_task(tp_sl_worker(session))]
         

@@ -460,7 +460,7 @@
             white-space: nowrap;
         }
 
-        
+
         td {
             padding: 12px 16px;
             font-size: 13px;
@@ -758,9 +758,11 @@
             background: rgba(16, 185, 129, 0.15) !important;
             box-shadow: inset 4px 0 0 var(--green);
         }
+
         .row-buyable:hover {
             background: rgba(16, 185, 129, 0.25) !important;
         }
+
         .hot-badge {
             background: var(--gradient-3);
             color: white;
@@ -771,10 +773,19 @@
             margin-left: 8px;
             animation: pulse-hot 2s infinite;
         }
+
         @keyframes pulse-hot {
-            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-            70% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+            0% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+            }
+
+            70% {
+                box-shadow: 0 0 0 4px rgba(239, 68, 68, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+            }
         }
 
         .toast.error {
@@ -1253,7 +1264,8 @@
                     <div class="table-title">⚡ Detected Signals</div>
                     <div style="display:flex; gap:12px; align-items:center;">
                         <div class="last-update" id="signalsCount">—</div>
-                        <button class="refresh-btn" id="refreshSignalsBtn" onclick="refreshSignalsRecent()" style="padding:6px 12px; font-size:12px;">
+                        <button class="refresh-btn" id="refreshSignalsBtn" onclick="refreshSignalsRecent()"
+                            style="padding:6px 12px; font-size:12px;">
                             🔄 Refresh Recent
                         </button>
                         <div class="last-update" id="signalsLastUpdate">Last update: —</div>
@@ -1267,7 +1279,7 @@
                                 <th>Scores (II / Degen)</th>
                                 <th>Price</th>
                                 <th>Market (Liq / Mcap)</th>
-                                <th>Risk (Ins. PSI / Top10)</th>
+                                <th>Risk (Ins. / Cr. PSI / Top10)</th>
                                 <th>Sizing (Win / Size)</th>
                                 <th>Time</th>
                                 <th>Action</th>
@@ -1677,7 +1689,7 @@
                     <div style="color:var(--text-secondary)">$${formatNum(s.marketcap)} <span style="font-size:10px;color:var(--text-muted)">MCap</span></div>
                 </td>
                 <td class="mono">
-                    <div style="color:${s.insider_psi > 0.5 ? 'var(--red)' : 'var(--text-secondary)'}; margin-bottom:2px;">${(s.insider_psi).toFixed(2)} <span style="font-size:10px;color:var(--text-muted)">Ins. PSI</span></div>
+                    <div style="color:${s.insider_psi > 0.5 ? 'var(--red)' : 'var(--text-secondary)'}; margin-bottom:2px;">${(s.insider_psi).toFixed(2)} <span style="font-size:10px;color:var(--text-muted)">Ins.</span> | <span style="color:${s.creator_risk > 0.5 ? 'var(--red)' : 'var(--text-secondary)'};">${(s.creator_risk || 0).toFixed(2)}</span> <span style="font-size:10px;color:var(--text-muted)">Cr. PSI</span></div>
                     <div style="color:var(--yellow)">${(s.top10_ratio || 0).toFixed(1)}% <span style="font-size:10px;color:var(--text-muted)">Top10</span></div>
                 </td>
                 <td class="mono">
@@ -1850,7 +1862,7 @@
                 return;
             }
 
-                        tbody.innerHTML = data.tokens.map(t => {
+            tbody.innerHTML = data.tokens.map(t => {
                 const displayName = t.symbol === "???" ? t.address.slice(0, 4) : t.symbol;
                 const isBuyable = t.instability_index > 100.0 && t.liquidity > 5000 && t.marketcap < 1000000;
                 const hotBadge = isBuyable ? '<span class="hot-badge">🔥 HOT</span>' : '';
@@ -1870,7 +1882,7 @@
                                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                                 </svg>
                             </span>
-                            <div style="margin-top:4px;"><span class="narrative-tag narrative-${(t.narrative||'').toLowerCase()}">${t.narrative||'GENERIC'}</span></div>
+                            <div style="margin-top:4px;"><span class="narrative-tag narrative-${(t.narrative || '').toLowerCase()}">${t.narrative || 'GENERIC'}</span></div>
                         </div>
                     </td>
                     <td>

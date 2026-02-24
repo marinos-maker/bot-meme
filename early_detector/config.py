@@ -54,7 +54,7 @@ SW_MIN_WIN_RATE: float = 0.25 # Mantenere 25%
 
 # ── Timing ────────────────────────────────────────────────────────────────────
 SCAN_INTERVAL: int = int(os.getenv("SCAN_INTERVAL", "15"))  # Reduced for V4.0 latency
-DASHBOARD_PORT: int = int(os.getenv("DASHBOARD_PORT", "8050"))
+DASHBOARD_PORT: int = int(os.getenv("PORT", os.getenv("DASHBOARD_PORT", "8050")))
 
 # ── Safety Filters ────────────────────────────────────────────────────────────
 MAX_TOP5_HOLDER_RATIO: float = 0.40
