@@ -417,10 +417,14 @@ def calculate_quantitative_score(token_data: dict, history: list) -> dict:
     
     # 8. Top 10 Concentration Penalty (0-15 points)
     # Early coins naturally have high Top10. Don't heavily penalize unless > 85%
-    if top10 >= 90.0:
-        risk_penalty += 15
-    elif top10 >= 85.0:
-        risk_penalty += 5
+    # Skip for Pump.fun tokens as 100% is normal for bonding curve
+    if not address.endswith("pump"):
+        if top10 >= 90.0:
+            risk_penalty += 15
+        elif top10 >= 85.0:
+            risk_penalty += 5
+    elif top10 < 90.0: # If it's a pump token but concentration is dropping, that's actually GOOD (distribution)
+        opportunity_bonus += 5
     
     # 9. Creator Risk Penalty (0-10 points)
     if creator_risk >= 0.7:
@@ -467,6 +471,8 @@ def calculate_quantitative_score(token_data: dict, history: list) -> dict:
     else:
         if mint_auth or freeze_auth:
             summary = "CRITICAL: Mint/Freeze authority enabled - potential rug pull"
+        elif address.endswith("pump") and top10 >= 99.0:
+            summary = "Pump.fun bonding curve active (high concentration normal for early launch)"
         elif top10 >= 50.0:
             summary = f"High concentration risk: Top 10 hold {top10:.1f}%"
         elif insider_psi >= 0.6:

@@ -49,10 +49,10 @@ WEIGHT_VI: float = 2.0        # Volume Intensity (Turnover)
 WEIGHT_SELL: float = 2.0      # Sell Pressure (subtracted)
 
 # ── Smart Wallet Thresholds ───────────────────────────────────────────────────
-# Opzione C: Criteri più selettivi per identificare smart wallet di qualità
-SW_MIN_ROI: float = 1.3      # Da 1.0 a 1.3 (ROI > 1.3x)
-SW_MIN_TRADES: int = 2       # Da 1 a 2
-SW_MIN_WIN_RATE: float = 0.35 # Da 0.25 a 0.35
+# Opzione A: Criteri più inclusivi per identificare smart wallet potenziali
+SW_MIN_ROI: float = 1.1      # Da 1.3 a 1.1 (ROI > 1.1x)
+SW_MIN_TRADES: int = 1       # Da 2 a 1
+SW_MIN_WIN_RATE: float = 0.25 # Da 0.35 a 0.25
 
 # ── Timing ────────────────────────────────────────────────────────────────────
 SCAN_INTERVAL: int = int(os.getenv("SCAN_INTERVAL", "15"))  # Reduced for V4.0 latency

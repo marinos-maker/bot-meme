@@ -1,0 +1,74 @@
+2026-02-25 12:59:38.379 | INFO     | __main__:analyze_wallets_distribution:21 - \U0001f50d Analizzando la distribuzione dei wallet...
+2026-02-25 12:59:38.379 | INFO     | early_detector.db:get_pool:17 - Creating database connection poolà
+2026-02-25 12:59:39.573 | INFO     | early_detector.db:get_pool:24 - Database pool created.
+2026-02-25 12:59:39.573 | INFO     | __main__:analyze_wallets_distribution:26 - \U0001f4ca Recuperando statistiche dei wallet...
+2026-02-25 12:59:41.339 | INFO     | __main__:analyze_wallets_distribution:40 - \u2705 Trovati 31739 wallet nel database
+2026-02-25 12:59:41.471 | INFO     | __main__:analyze_wallets_distribution:67 - \U0001f3af Smart wallet attuali: 9/31739 (0.03%)
+2026-02-25 12:59:41.471 | INFO     | __main__:analyze_wallets_distribution:68 -    Criteri: ROI > 1.3, Trade >= 2, Win Rate > 35.0%
+2026-02-25 12:59:41.472 | INFO     | __main__:analyze_wallets_distribution:71 - 
+\U0001f4c8 Distribuzione ROI:
+2026-02-25 12:59:41.474 | INFO     | __main__:analyze_wallets_distribution:76 -    ROI >  0.5x: 31739 (100.0%)
+2026-02-25 12:59:41.476 | INFO     | __main__:analyze_wallets_distribution:76 -    ROI >  0.8x: 31738 (100.0%)
+2026-02-25 12:59:41.477 | INFO     | __main__:analyze_wallets_distribution:76 -    ROI >  1.0x:    84 (  0.3%)
+2026-02-25 12:59:41.478 | INFO     | __main__:analyze_wallets_distribution:76 -    ROI >  1.1x:    64 (  0.2%)
+2026-02-25 12:59:41.479 | INFO     | __main__:analyze_wallets_distribution:76 -    ROI >  1.2x:    57 (  0.2%)
+2026-02-25 12:59:41.479 | INFO     | __main__:analyze_wallets_distribution:76 -    ROI >  1.5x:    47 (  0.1%)
+2026-02-25 12:59:41.480 | INFO     | __main__:analyze_wallets_distribution:76 -    ROI >  2.0x:    23 (  0.1%)
+2026-02-25 12:59:41.481 | INFO     | __main__:analyze_wallets_distribution:76 -    ROI >  3.0x:    14 (  0.0%)
+2026-02-25 12:59:41.482 | INFO     | __main__:analyze_wallets_distribution:76 -    ROI >  5.0x:     6 (  0.0%)
+2026-02-25 12:59:41.483 | INFO     | __main__:analyze_wallets_distribution:76 -    ROI > 10.0x:     4 (  0.0%)
+2026-02-25 12:59:41.483 | INFO     | __main__:analyze_wallets_distribution:79 - 
+\U0001f3af Distribuzione Win Rate:
+2026-02-25 12:59:41.484 | INFO     | __main__:analyze_wallets_distribution:84 -    Win Rate >  0.1:    77 (  0.2%)
+2026-02-25 12:59:41.484 | INFO     | __main__:analyze_wallets_distribution:84 -    Win Rate >  0.2:    65 (  0.2%)
+2026-02-25 12:59:41.485 | INFO     | __main__:analyze_wallets_distribution:84 -    Win Rate >  0.2:    64 (  0.2%)
+2026-02-25 12:59:41.486 | INFO     | __main__:analyze_wallets_distribution:84 -    Win Rate >  0.3:    64 (  0.2%)
+2026-02-25 12:59:41.487 | INFO     | __main__:analyze_wallets_distribution:84 -    Win Rate >  0.4:    62 (  0.2%)
+2026-02-25 12:59:41.489 | INFO     | __main__:analyze_wallets_distribution:84 -    Win Rate >  0.5:    54 (  0.2%)
+2026-02-25 12:59:41.490 | INFO     | __main__:analyze_wallets_distribution:84 -    Win Rate >  0.6:    54 (  0.2%)
+2026-02-25 12:59:41.490 | INFO     | __main__:analyze_wallets_distribution:84 -    Win Rate >  0.7:    51 (  0.2%)
+2026-02-25 12:59:41.491 | INFO     | __main__:analyze_wallets_distribution:84 -    Win Rate >  0.8:    51 (  0.2%)
+2026-02-25 12:59:41.492 | INFO     | __main__:analyze_wallets_distribution:84 -    Win Rate >  0.9:    51 (  0.2%)
+2026-02-25 12:59:41.492 | INFO     | __main__:analyze_wallets_distribution:87 - 
+\U0001f4ca Distribuzione Trade Count:
+2026-02-25 12:59:41.494 | INFO     | __main__:analyze_wallets_distribution:92 -    Trade >=    1: 31739 (100.0%)
+2026-02-25 12:59:41.495 | INFO     | __main__:analyze_wallets_distribution:92 -    Trade >=    2: 20231 ( 63.7%)
+2026-02-25 12:59:41.496 | INFO     | __main__:analyze_wallets_distribution:92 -    Trade >=    3: 15052 ( 47.4%)
+2026-02-25 12:59:41.498 | INFO     | __main__:analyze_wallets_distribution:92 -    Trade >=    5:  9470 ( 29.8%)
+2026-02-25 12:59:41.498 | INFO     | __main__:analyze_wallets_distribution:92 -    Trade >=   10:  3993 ( 12.6%)
+2026-02-25 12:59:41.499 | INFO     | __main__:analyze_wallets_distribution:92 -    Trade >=   20:  1435 (  4.5%)
+2026-02-25 12:59:41.500 | INFO     | __main__:analyze_wallets_distribution:92 -    Trade >=   50:   371 (  1.2%)
+2026-02-25 12:59:41.500 | INFO     | __main__:analyze_wallets_distribution:92 -    Trade >=  100:   138 (  0.4%)
+2026-02-25 12:59:41.501 | INFO     | __main__:analyze_wallets_distribution:92 -    Trade >=  500:    14 (  0.0%)
+2026-02-25 12:59:41.502 | INFO     | __main__:analyze_wallets_distribution:92 -    Trade >= 1000:     4 (  0.0%)
+2026-02-25 12:59:41.502 | INFO     | __main__:analyze_wallets_distribution:95 - 
+\U0001f50d Analisi combinazioni di criteri:
+2026-02-25 12:59:41.504 | INFO     | __main__:analyze_wallets_distribution:110 -    ROI > 1.0x, Trade >= 2, WR >  20%:    15 (  0.0%)
+2026-02-25 12:59:41.506 | INFO     | __main__:analyze_wallets_distribution:110 -    ROI > 1.0x, Trade >= 1, WR >  25%:    64 (  0.2%)
+2026-02-25 12:59:41.509 | INFO     | __main__:analyze_wallets_distribution:110 -    ROI > 0.8x, Trade >= 2, WR >  25%:    14 (  0.0%)
+2026-02-25 12:59:41.511 | INFO     | __main__:analyze_wallets_distribution:110 -    ROI > 1.1x, Trade >= 1, WR >  20%:    53 (  0.2%)
+2026-02-25 12:59:41.512 | INFO     | __main__:analyze_wallets_distribution:110 -    ROI > 1.2x, Trade >= 2, WR >  30%:    11 (  0.0%)
+2026-02-25 12:59:41.512 | INFO     | __main__:analyze_wallets_distribution:113 - 
+\U0001f3f7\ufe0f Analisi per cluster:
+2026-02-25 12:59:41.552 | INFO     | __main__:analyze_wallets_distribution:138 -    retail  : 20112 total,   0 smart ( 0.0%), avg ROI: 1.01x, avg WR: 0.00
+2026-02-25 12:59:41.552 | INFO     | __main__:analyze_wallets_distribution:138 -    insider :    61 total,   8 smart (13.1%), avg ROI: 3.00x, avg WR: 0.95
+2026-02-25 12:59:41.552 | INFO     | __main__:analyze_wallets_distribution:138 -    sniper  :    15 total,   1 smart ( 6.7%), avg ROI: 2.39x, avg WR: 0.06
+2026-02-25 12:59:41.552 | INFO     | __main__:analyze_wallets_distribution:138 -    new     : 11551 total,   0 smart ( 0.0%), avg ROI: 1.00x, avg WR: 0.00
+2026-02-25 12:59:41.552 | INFO     | __main__:analyze_wallets_distribution:141 - 
+\U0001f4ca Statistiche generali:
+2026-02-25 12:59:41.552 | INFO     | __main__:analyze_wallets_distribution:142 -    Wallet totali: 31739
+2026-02-25 12:59:41.555 | INFO     | __main__:analyze_wallets_distribution:143 -    ROI medio: 1.01x
+2026-02-25 12:59:41.565 | INFO     | __main__:analyze_wallets_distribution:144 -    ROI mediano: 1.00x
+2026-02-25 12:59:41.565 | INFO     | __main__:analyze_wallets_distribution:145 -    ROI max: 136.99x
+2026-02-25 12:59:41.567 | INFO     | __main__:analyze_wallets_distribution:146 -    Trade medio: 6.1
+2026-02-25 12:59:41.569 | INFO     | __main__:analyze_wallets_distribution:147 -    Trade mediano: 2.0
+2026-02-25 12:59:41.573 | INFO     | __main__:analyze_wallets_distribution:148 -    Win Rate medio: 0.00
+2026-02-25 12:59:41.575 | INFO     | __main__:analyze_wallets_distribution:149 -    Win Rate mediano: 0.00
+2026-02-25 12:59:41.575 | INFO     | __main__:analyze_wallets_distribution:152 - 
+\U0001f4a1 Proposta di criteri pi¨ flessibili:
+2026-02-25 12:59:41.575 | INFO     | __main__:analyze_wallets_distribution:153 -    Attuali: ROI > 1.1x, Trade >= 2, Win Rate > 25%
+2026-02-25 12:59:41.575 | INFO     | __main__:analyze_wallets_distribution:154 -    Alternative:
+2026-02-25 12:59:41.575 | INFO     | __main__:analyze_wallets_distribution:155 -    - Opzione A: ROI > 1.0x, Trade >= 2, Win Rate > 20%
+2026-02-25 12:59:41.575 | INFO     | __main__:analyze_wallets_distribution:156 -    - Opzione B: ROI > 0.8x, Trade >= 2, Win Rate > 25%
+2026-02-25 12:59:41.575 | INFO     | __main__:analyze_wallets_distribution:157 -    - Opzione C: ROI > 1.0x, Trade >= 1, Win Rate > 25%
+2026-02-25 12:59:41.575 | INFO     | __main__:analyze_wallets_distribution:158 -    - Opzione D: ROI > 1.2x, Trade >= 2, Win Rate > 30% (pi¨ conservativa)
