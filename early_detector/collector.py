@@ -136,6 +136,34 @@ async def fetch_dexscreener_pair(session: aiohttp.ClientSession,
         return None
 
 
+# ── Pump.fun (Authentic Holders/Meta) ──────────────────────────────────────────
+
+async def fetch_pump_fun_metrics(session: aiohttp.ClientSession, token_address: str) -> dict | None:
+    """Fetch real coin data from Pump.fun API, including holder count."""
+    if not token_address.endswith("pump"):
+        return None
+        
+    url = f"https://frontend-api.pump.fun/coins/{token_address}"
+    try:
+        async with session.get(url, timeout=5) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                # Pump.fun API returns a rich object. We extract what we need.
+                return {
+                    "holders": int(data.get("holder_count") or 0),
+                    "is_complete": data.get("complete", False),
+                    "description": data.get("description", ""),
+                    "twitter": data.get("twitter"),
+                    "telegram": data.get("telegram"),
+                    "website": data.get("website"),
+                    "reply_count": data.get("reply_count", 0),
+                    "last_reply": data.get("last_reply"),
+                }
+    except Exception as e:
+        logger.debug(f"Pump.fun API error for {token_address[:8]}: {e}")
+    return None
+
+
 # ── Unified fetch ─────────────────────────────────────────────────────────────
 
 async def fetch_token_metrics(session: aiohttp.ClientSession,
@@ -198,6 +226,14 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
             # during the bonding curve phase.
             metrics["liquidity"] = mcap * 0.40
             logger.debug(f"Applied virtual liquidity for {token_address[:8]}: ${metrics['liquidity']:,.0f}")
+            
+        # V4.8: Add real-time Pump.fun holder and social enrichment
+        pump_meta = await fetch_pump_fun_metrics(session, token_address)
+        if pump_meta:
+            metrics["holders"] = pump_meta.get("holders", metrics.get("holders", 0))
+            if pump_meta.get("twitter"):
+                metrics["has_twitter"] = True
+            logger.debug(f"Pump.fun enrichment for {token_address[:8]}: holders={metrics['holders']}, twitter={metrics.get('has_twitter')}")
 
     # Integrate Helius metrics if available ONLY FOR VIABLE TOKENS
     # (to save the 1,000,000 requests/month limit)

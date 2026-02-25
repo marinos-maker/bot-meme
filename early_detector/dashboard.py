@@ -331,25 +331,47 @@ async def api_analyze_token(address: str):
     """Get AI analysis for a specific token."""
     pool = await get_pool()
     
-    # Get latest metrics
+    # Get latest metrics (preferring those with instability_index)
     latest_row = await pool.fetchrow(
         """
         SELECT t.id, t.address, t.symbol, t.name, t.narrative,
                m.price, m.marketcap, m.liquidity, m.holders,
                m.volume_5m, m.buys_5m, m.sells_5m, m.instability_index,
-               m.insider_psi, m.creator_risk_score
+               m.insider_psi, m.creator_risk_score,
+               m.mint_authority, m.freeze_authority, m.top10_ratio
         FROM tokens t
         JOIN token_metrics_timeseries m ON m.token_id = t.id
         WHERE t.address = $1
-        ORDER BY m.timestamp DESC
+        ORDER BY (m.instability_index IS NOT NULL) DESC, m.timestamp DESC
         LIMIT 1
         """,
         address,
     )
     
+    # Enrich with latest signal data if available
+    signal_row = await pool.fetchrow(
+        "SELECT instability_index, degen_score, ai_analysis FROM signals WHERE token_id = $1 ORDER BY timestamp DESC LIMIT 1",
+        latest_row["id"] if latest_row else None
+    )
+    
     if not latest_row:
         return JSONResponse(status_code=404, content={"message": "Token not found"})
         
+    token_data = dict(latest_row)
+    
+    # V4.8: Enforce real-time holder count for Pump.fun tokens if missing in DB
+    if address.endswith("pump") and (token_data.get("holders") or 0) < 5:
+        try:
+             import aiohttp
+             from early_detector.collector import fetch_pump_fun_metrics
+             async with aiohttp.ClientSession() as session:
+                 pump_meta = await fetch_pump_fun_metrics(session, address)
+                 if pump_meta and pump_meta.get("holders"):
+                     token_data["holders"] = pump_meta["holders"]
+                     logger.info(f"Dashboard: Refreshed holder count for {address[:8]} via Pump.fun API: {token_data['holders']}")
+        except Exception as e:
+             logger.error(f"Dashboard: Failed to refresh pump holders: {e}")
+
     # Get history for growth calculation
     history_rows = await pool.fetch(
         """
@@ -359,11 +381,16 @@ async def api_analyze_token(address: str):
         ORDER BY timestamp DESC
         LIMIT 10
         """,
-        latest_row["id"],
+        token_data["id"],
     )
     
     history = [dict(r) for r in history_rows]
-    token_data = dict(latest_row)
+    
+    if signal_row:
+        # Prefer signal instability if metric instability is missing or lower
+        if not token_data.get("instability_index") or token_data["instability_index"] < (signal_row["instability_index"] or 0):
+             token_data["instability_index"] = signal_row["instability_index"]
+        token_data["signal_degen_score"] = signal_row["degen_score"]
     
     # Convert Decimals to float for the analyst
     for k, v in token_data.items():

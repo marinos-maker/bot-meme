@@ -369,13 +369,19 @@ def calculate_quantitative_score(token_data: dict, history: list) -> dict:
     else: 
         risk_penalty += 5
     
-    # 3. Holder Growth Score (0-15 points)
+    # 3. Holder Growth & Absolute Count (0-20 points)
     if h_growth >= 30:
         base_score += 15
         opportunity_bonus += 10
     elif h_growth >= 10:
         base_score += 10
     elif h_growth > 0:
+        base_score += 5
+    
+    # Absolute holders bonus for early tokens
+    if holders >= 200:
+        base_score += 10
+    elif holders >= 50:
         base_score += 5
     
     # 4. Instability Index Score (0-25 points)
@@ -425,6 +431,11 @@ def calculate_quantitative_score(token_data: dict, history: list) -> dict:
         risk_penalty += 50  # Critical penalty
     if freeze_auth:  # Freeze authority enabled
         risk_penalty += 50  # Critical penalty
+    
+    # 11. Narrative Bonus (0-10 points)
+    narrative = (token_data.get('narrative') or '').upper()
+    if narrative in ['AI', 'POLITICS', 'CULTURE']:
+        opportunity_bonus += 10
     
     # Calculate final score
     final_score = base_score + opportunity_bonus - risk_penalty

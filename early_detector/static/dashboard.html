@@ -2024,11 +2024,13 @@
             // Update UI with AI results
             document.getElementById('analystVerdict').textContent = data.verdict;
             document.getElementById('analystVerdict').className = `verdict-badge v-${data.verdict}`;
-            document.getElementById('analystScore').textContent = data.rating;
+            // Handle 0-100 scale (Degen Score)
+            const score = data.degen_score || (data.rating ? data.rating * 10 : 0);
+            document.getElementById('analystScore').textContent = score;
 
-            const scoreColor = data.rating > 7 ? 'var(--green)' : data.rating > 4 ? 'var(--yellow)' : 'var(--red)';
+            const scoreColor = score >= 70 ? 'var(--green)' : score >= 40 ? 'var(--yellow)' : 'var(--red)';
             document.getElementById('analystScore').style.color = scoreColor;
-            document.getElementById('analystProgress').style.width = `${data.rating * 10}%`;
+            document.getElementById('analystProgress').style.width = `${score}%`;
             document.getElementById('analystProgress').style.background = scoreColor;
 
             document.getElementById('analystSummary').textContent = data.summary;
