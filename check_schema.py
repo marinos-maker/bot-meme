@@ -8,7 +8,7 @@ load_dotenv()
 async def check():
     conn = await asyncpg.connect(os.getenv("SUPABASE_DB_URL"), statement_cache_size=0)
     try:
-        tables = ['tokens', 'token_metrics_timeseries', 'signals']
+        tables = ['tokens', 'token_metrics_timeseries', 'signals', 'trades']
         for table in tables:
             print(f"\nTable: {table}")
             columns = await conn.fetch(

@@ -8,7 +8,7 @@ from loguru import logger
 from early_detector.config import (
     DEXSCREENER_API_URL, PUMPPORTAL_API_KEY
 )
-from early_detector.helius_client import get_token_largest_accounts, get_asset
+from early_detector.helius_client import get_token_largest_accounts, get_asset, get_token_buyers
 from early_detector.cache import cache
 
 async def fetch_dex_metadata(session: aiohttp.ClientSession, token_address: str) -> dict | None:
@@ -95,6 +95,15 @@ async def fetch_helius_metrics(session: aiohttp.ClientSession, token_address: st
                 logger.debug(f"Helius: {token_address[:8]} creator={res['creator'][:8]}...")
     except Exception as e:
         logger.debug(f"Helius DAS meta error for {token_address[:8]}: {e}")
+
+    # V4.8: Fetch recent buyers for Insider Risk detection
+    try:
+        buyers = await get_token_buyers(session, token_address, limit=15)
+        if buyers:
+            res["buyers_data"] = buyers
+            logger.debug(f"Helius: {token_address[:8]} fetched {len(buyers)} early buyers")
+    except Exception as e:
+        logger.debug(f"Helius buyers fetch error for {token_address[:8]}: {e}")
 
     return res
 
@@ -245,6 +254,8 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
                 metrics["top10_ratio"] = h_metrics["top10_ratio"]
             if "creator" in h_metrics:
                 metrics["creator_address"] = h_metrics["creator"]
+            if "buyers_data" in h_metrics:
+                metrics["buyers_data"] = h_metrics["buyers_data"]
 
     # Initialize missing fields that were previously provided by Helius/Birdeye
     # to avoid crashes in feature calculation

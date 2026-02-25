@@ -373,7 +373,7 @@ async def process_token_to_features(session, tok) -> dict | None:
         
         # ── Applicazione Reale del Creator Risk Score ──
         from early_detector.db import get_token_creator, get_creator_stats
-        creator_risk_score = 0.0
+        creator_risk_score = 0.15 # Default neutral risk for new creators
         creator_address = await get_token_creator(address)
         if creator_address:
             creator_stats = await get_creator_stats(creator_address)
