@@ -247,7 +247,15 @@ async def process_token_to_features(session, tok) -> dict | None:
             
         # Re-upsert with potentially better name/symbol and narrative
         creator_address = metrics.get("creator_address")
-        token_id = await upsert_token(address, name, symbol, narrative=narrative, creator_address=creator_address)
+        mint_auth = metrics.get("mint_authority")
+        freeze_auth = metrics.get("freeze_authority")
+        token_id = await upsert_token(
+            address, name, symbol, 
+            narrative=narrative, 
+            creator_address=creator_address,
+            mint_authority=mint_auth,
+            freeze_authority=freeze_auth
+        )
         logger.debug(f"upsert_token called for {address[:8]} with name={name}, symbol={symbol}, creator={creator_address}")
         
         # History

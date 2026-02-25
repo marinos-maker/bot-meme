@@ -38,7 +38,9 @@ async def close_pool() -> None:
 
 async def upsert_token(address: str, name: str | None = None,
                        symbol: str | None = None, narrative: str | None = None,
-                       creator_address: str | None = None) -> str:
+                       creator_address: str | None = None,
+                       mint_authority: str | None = None,
+                       freeze_authority: str | None = None) -> str:
     """Insert a token if it doesn't exist; return its UUID."""
     pool = await get_pool()
     row = await pool.fetchrow(
@@ -57,10 +59,12 @@ async def upsert_token(address: str, name: str | None = None,
                 ELSE tokens.symbol 
             END,
             narrative = COALESCE(NULLIF($4, 'GENERIC'), tokens.narrative),
-            creator_address = COALESCE($5, tokens.creator_address)
+            creator_address = COALESCE($5, tokens.creator_address),
+            mint_authority = COALESCE($6, tokens.mint_authority),
+            freeze_authority = COALESCE($7, tokens.freeze_authority)
         RETURNING id
         """,
-        address, name, symbol, narrative, creator_address,
+        address, name, symbol, narrative, creator_address, mint_authority, freeze_authority,
     )
     return str(row["id"])
 
@@ -142,8 +146,8 @@ async def insert_metrics(token_id: str, data: dict) -> None:
             (token_id, price, marketcap, liquidity, holders,
              volume_5m, volume_1h, buys_5m, sells_5m,
              top10_ratio, smart_wallets_active, instability_index,
-             insider_psi, creator_risk_score)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             insider_psi, creator_risk_score, mint_authority, freeze_authority)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         """,
         token_id,
         data.get("price"),
@@ -159,6 +163,8 @@ async def insert_metrics(token_id: str, data: dict) -> None:
         data.get("instability_index"),
         data.get("insider_psi", 0.0),
         data.get("creator_risk_score", 0.0),
+        data.get("mint_authority"),
+        data.get("freeze_authority"),
     )
 
 
@@ -214,7 +220,9 @@ async def insert_signal(token_id: str, instability_index: float,
                         tp_1: float | None = None,
                         degen_score: int | None = None,
                         ai_summary: str | None = None,
-                        ai_analysis: dict | None = None) -> None:
+                        ai_analysis: dict | None = None,
+                        mint_authority: str | None = None,
+                        freeze_authority: str | None = None) -> None:
     """Record a generated signal."""
     import json
     pool = await get_pool()
@@ -223,12 +231,14 @@ async def insert_signal(token_id: str, instability_index: float,
         INSERT INTO signals (token_id, instability_index, entry_price, 
                             liquidity, marketcap, confidence, kelly_size, 
                             insider_psi, creator_risk, hard_stop, tp_1,
-                            degen_score, ai_summary, ai_analysis)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                            degen_score, ai_summary, ai_analysis,
+                            mint_authority, freeze_authority)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         """,
         token_id, instability_index, entry_price, liquidity, marketcap, 
         confidence, kelly_size, insider_psi, creator_risk, hard_stop, tp_1,
-        degen_score, ai_summary, json.dumps(ai_analysis) if ai_analysis else None
+        degen_score, ai_summary, json.dumps(ai_analysis) if ai_analysis else None,
+        mint_authority, freeze_authority
     )
     logger.info(f"Signal saved for token {token_id} — II={instability_index:.3f}, Degen={degen_score}")
 

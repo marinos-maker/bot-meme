@@ -9,6 +9,9 @@ from loguru import logger
 from duckduckgo_search import DDGS
 from early_detector.config import GOOGLE_API_KEY, OPENAI_API_KEY, OPENAI_BASE_URL, AI_MODEL_NAME
 
+import warnings
+warnings.filterwarnings("ignore", message=r"This package \(duckduckgo_search\) has been renamed to ddgs!")
+
 # Setup OpenAI
 try:
     from openai import AsyncOpenAI
@@ -54,7 +57,8 @@ async def get_social_sentiment(symbol: str, name: str) -> str:
             query = f'site:twitter.com "{symbol}" crypto OR solana OR "{name}"'
             try:
                 # DDGS can sometimes fail or be heavily rate limited
-                results = DDGS().text(query, max_results=3)
+                with DDGS() as ddgs:
+                    results = list(ddgs.text(query, max_results=3))
                 if not results:
                     return "No distinct social sentiment found on X."
                 return " | ".join([r.get("body", "") for r in results])

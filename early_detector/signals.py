@@ -500,7 +500,9 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
             tp_1=signal["tp_1"],
             degen_score=signal.get("degen_score"),
             ai_summary=signal.get("ai_summary"),
-            ai_analysis=signal.get("ai_analysis")
+            ai_analysis=signal.get("ai_analysis"),
+            mint_authority=signal.get("mint_authority"),
+            freeze_authority=signal.get("freeze_authority")
         )
         logger.info(f"Signal saved successfully: {signal.get('symbol')} with degen_score={signal.get('degen_score')}")
 
