@@ -52,34 +52,37 @@ EXPERT_SEED_WALLETS = [
 async def discovery_worker(session: aiohttp.ClientSession) -> None:
     """Producer: Finds new tokens and pushes them to the queue."""
     logger.info("🕵️ Discovery worker started (PumpPortal mode)")
-    seen_addrs = set()
-    last_clear = asyncio.get_event_loop().time()
+    last_queued = {} # address -> timestamp
     
     while True:
         try:
             batch = []
+            now = asyncio.get_event_loop().time()
             
-            # Periodically clear seen_addrs every 2 hours
-            if asyncio.get_event_loop().time() - last_clear > 7200:
-                seen_addrs.clear()
-                last_clear = asyncio.get_event_loop().time()
-                logger.debug("Cleared seen_addrs cache in discovery_worker")
+            # Periodically prune old entries from last_queued to prevent memory growth (e.g., older than 1 hour)
+            if len(last_queued) > 5000:
+                last_queued = {addr: ts for addr, ts in last_queued.items() if now - ts < 3600}
+                logger.debug(f"Pruned last_queued cache. Remaining items: {len(last_queued)}")
 
             # 1. Pick up tokens discovered by PumpPortal that have NO metrics yet
             unprocessed = await get_unprocessed_tokens(limit=50)
             if unprocessed:
                 for addr in unprocessed:
-                    if addr not in seen_addrs:
+                    last_time = last_queued.get(addr, 0)
+                    # New tokens get prioritized for immediate first scan, then every 60s if still unprocessed
+                    if now - last_time > 60:
                         batch.append({"address": addr})
-                        seen_addrs.add(addr)
+                        last_queued[addr] = now
 
-            # 2. Re-scan recently tracked tokens to keep data fresh
-            tracked_addrs = await get_tracked_tokens(limit=100)
+            # 2. Re-scan recently tracked tokens to keep data fresh (V4.9 Fix)
+            tracked_addrs = await get_tracked_tokens(limit=500)
             if tracked_addrs:
                 for addr in tracked_addrs:
-                    if addr not in seen_addrs:
+                    last_time = last_queued.get(addr, 0)
+                    # Tracked tokens (active in last 4h) refreshed every 120s
+                    if now - last_time > 120:
                         batch.append({"address": addr})
-                        seen_addrs.add(addr)
+                        last_queued[addr] = now
 
             if batch:
                 # V4.2 Anti-Jammed Queue
@@ -87,7 +90,7 @@ async def discovery_worker(session: aiohttp.ClientSession) -> None:
                 if qsize > 15:
                     logger.warning(f"⚠️ Processors jammed (Queue size: {qsize}). Skipping discovery cycle.")
                 else:
-                    logger.info(f"📦 Sending batch of {len(batch)} tokens to processors")
+                    logger.info(f"📦 Sending batch of {len(batch)} tokens to processors for refresh")
                     await token_queue.put(batch)
             
         except Exception as e:
@@ -109,11 +112,11 @@ async def processor_worker_batch(worker_id: int, session: aiohttp.ClientSession)
             # Process tokens with limited concurrency
             # to avoid overwhelming free-tier APIs and credit exhaustion
             results = []
-            batch_sem = asyncio.Semaphore(5) # Increase to 5 concurrent tasks per worker
+            batch_sem = asyncio.Semaphore(2) # Reduced to 2 to stay within DexScreener 300rpm limit
             async def _throttled(tok):
                 async with batch_sem:
                     res = await process_token_to_features(session, tok)
-                    await asyncio.sleep(0.5) # Reduced from 1.0s for better throughput
+                    await asyncio.sleep(1.0) # Increased to 1.0s for rate safety
                     return res
             tasks = [_throttled(t) for t in token_batch]
             results = await asyncio.gather(*tasks)

@@ -334,17 +334,31 @@ async def get_smart_wallets() -> list[str]:
     return [r["wallet"] for r in rows]
 
 
-async def get_tracked_tokens(limit: int = 50) -> list[str]:
-    """Return addresses of recently active tokens for wallet profiling."""
+async def get_tracked_tokens(limit: int = 500) -> list[str]:
+    """Return addresses of recently active tokens and signals for refresh."""
     pool = await get_pool()
     rows = await pool.fetch(
         """
-        SELECT t.address
-        FROM tokens t
-        JOIN token_metrics_timeseries m ON m.token_id = t.id
-        WHERE m.timestamp > NOW() - INTERVAL '4 hours'
-        GROUP BY t.address
-        ORDER BY MAX(m.timestamp) DESC
+        WITH recent_signals AS (
+            SELECT DISTINCT t.address, MAX(s.timestamp) as last_sig
+            FROM tokens t
+            JOIN signals s ON s.token_id = t.id
+            WHERE s.timestamp > NOW() - INTERVAL '12 hours'
+            GROUP BY t.address
+        ),
+        recent_metrics AS (
+            SELECT DISTINCT t.address, MAX(m.timestamp) as last_met
+            FROM tokens t
+            JOIN token_metrics_timeseries m ON m.token_id = t.id
+            WHERE m.timestamp > NOW() - INTERVAL '4 hours'
+            GROUP BY t.address
+        )
+        SELECT address FROM (
+            SELECT address, last_sig as sort_time FROM recent_signals
+            UNION
+            SELECT address, last_met as sort_time FROM recent_metrics
+        ) combined
+        ORDER BY sort_time DESC
         LIMIT $1
         """,
         limit,
