@@ -2473,21 +2473,21 @@
                     // THE BEST (Absolute lowest II and under threshold)
                     bg = 'var(--green)';
                     textCol = '#000';
-                } else if (score > 50) {
-                    // High Risk
-                    const opacity = 0.4 + (score / 200);
-                    bg = `rgba(239, 68, 68, ${opacity})`;
+                } else if (score > 40) {
+                    // High Risk / Opportunity - Dynamic Opacity
+                    const intensity = Math.pow(score / 100, 0.7); // Better distribution
+                    bg = `rgba(239, 68, 68, ${0.3 + intensity * 0.7})`;
                     textCol = '#fff';
-                } else if (score > 15) {
+                } else if (score > 12) {
                     // Moderate
-                    const opacity = 0.3 + (score / 150);
-                    bg = `rgba(245, 158, 11, ${opacity})`;
-                } else if (score > 5) {
+                    const intensity = score / 40;
+                    bg = `rgba(245, 158, 11, ${0.2 + intensity * 0.6})`;
+                } else if (score > 4) {
                     // Normal
-                    bg = `rgba(99, 102, 241, 0.3)`;
+                    bg = `rgba(99, 102, 241, 0.2)`;
                 } else {
                     // Stable/Good
-                    bg = `rgba(16, 185, 129, 0.2)`;
+                    bg = `rgba(16, 185, 129, 0.15)`;
                 }
 
                 return `

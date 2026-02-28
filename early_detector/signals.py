@@ -187,11 +187,12 @@ def passes_trigger(token: dict, threshold: float) -> bool:
     # NOTE: We do NOT add a hard floor here — new pump tokens legitimately start at II=0
     # and build up momentum over cycles. The dynamic threshold above handles minimum II.
     
-    # 2. Condition: dII/dt > -2.5 (More permissive momentum)
-    # Catch tokens even if they are stabilizing after a peak
+    # 2. Condition: Prevent buying into massive dumps, but allow minor dips on high-momentum tokens
     if delta_ii < -2.5:
-        logger.info(f"Trigger rejected: Sharp falling instability (II={ii:.3f}, dII={delta_ii:.3f}) for {token.get('symbol')}")
-        return False
+        # If absolute index is very high, allow larger dips before rejecting
+        if ii < (threshold * 2.0) or (delta_ii < -15.0):
+            logger.info(f"Trigger rejected: Sharp falling instability (II={ii:.3f}, dII={delta_ii:.3f}) for {token.get('symbol')}")
+            return False
         
     # 3. Condition: Price Compression
     # Be more permissive with recent price action (Increased from 5.0 to 12.0)
@@ -224,7 +225,8 @@ def passes_trigger(token: dict, threshold: float) -> bool:
              return False
     
     # 4b. MCap minimum check (Lowered to allow the user's micro-caps)
-    if mcap < (MCAP_MIN * 0.5): # Use 50% of min for fast-track
+    # Allows Pump.fun tokens that naturally start at ~$2200
+    if mcap < 2000:
         logger.info(f"Trigger rejected: MCap extremely low (${mcap:,.0f}) for {token.get('symbol')}")
         return False
         
@@ -324,17 +326,7 @@ def passes_safety_filters(token: dict) -> bool:
         else:
             logger.info(f"Safety Grace: Top 10 UNKNOWN for micro cap ({mcap:,.0f}) — PROCEEDING {symbol}")
     
-    if is_pump:
-        # V5.0: Pump tokens with Top10 > 90% are ALWAYS rejected — bonding curve concentration
-        # is a rug risk until the token has enough distribution (graduated or mcap > 50k)
-        if top10_ratio and top10_ratio > 90.0:
-            if mcap < 50000:  # Still on bonding curve with extreme concentration
-                logger.info(f"Safety: Pump token Top10={top10_ratio:.1f}% with MCap=${mcap:,.0f} — REJECTED {symbol} (bonding curve trap)")
-                return False
-            elif top10_ratio > 98.0:
-                logger.info(f"Safety: Extreme Top10={top10_ratio:.1f}% even at MCap=${mcap:,.0f} — REJECTED {symbol}")
-                return False
-    else:
+    if not is_pump:
         # Graduated tokens: enforce TOP10_MAX_RATIO strictly
         if top10_ratio and top10_ratio > threshold_percent:
             logger.info(f"Safety: High Top 10 concentration ({top10_ratio:.1f}% > {threshold_percent}%) — REJECTED {symbol}")
@@ -376,16 +368,16 @@ def passes_quality_gate(token_data: dict, ai_result: dict) -> bool:
     """
     symbol = token_data.get('symbol', 'UNKNOWN')
     
-    # 1. MCap Floor
+    # 1. MCap Floor (Start tracking around $2k for Pump)
     mcap = token_data.get("marketcap") or 0
-    if mcap < MCAP_MIN:
-        logger.info(f"Quality Gate: REJECTED {symbol} - MCap too low (${mcap:,.0f} < ${MCAP_MIN:,.0f})")
+    if mcap < 2000:
+        logger.info(f"Quality Gate: REJECTED {symbol} - MCap too low (${mcap:,.0f} < $2,000)")
         return False
     
-    # 2. Liquidity Floor — virtual liquidity gets a HIGHER bar
+    # 2. Liquidity Floor — virtual liquidity gets a HIGHER bar, but reasonable for micro-caps
     liq = token_data.get("liquidity") or 0
     is_virtual_liq = token_data.get("liquidity_is_virtual", False)
-    min_liq = 1000 if is_virtual_liq else 500
+    min_liq = 300 if is_virtual_liq else 200
     if liq < min_liq:
         logger.info(f"Quality Gate: REJECTED {symbol} - Liquidity too low (${liq:.0f}, virtual={is_virtual_liq})")
         return False
@@ -400,7 +392,7 @@ def passes_quality_gate(token_data: dict, ai_result: dict) -> bool:
         # If less than 15 minutes old, require BETTER degen score
         if age_min < 15:
             degen_score = ai_result.get("degen_score") or token_data.get("degen_score") or 0
-            if degen_score < 55:
+            if degen_score < 40:
                 logger.info(f"Quality Gate: REJECTED {symbol} - Too new ({age_min:.1f}m) and low score ({degen_score})")
                 return False
                 

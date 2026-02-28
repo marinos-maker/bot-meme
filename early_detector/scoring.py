@@ -93,13 +93,14 @@ def compute_instability(features_df: pd.DataFrame,
     
     df = features_df.copy()
 
-    # Robust Standardization
-    df["z_sa"] = zscore_robust(df["sa"])
-    df["z_holder"] = zscore_robust(df["holder_acc"])
-    df["z_vs"] = zscore_robust(df["vol_shift"])
-    df["z_swr"] = zscore_robust(df["swr"])
-    df["z_vi"] = zscore_robust(df["vol_intensity"])
-    df["z_sell"] = zscore_robust(df["sell_pressure"])
+    # Robust Standardization & Clipping
+    # Capping Z-scores at [-5, 50] to avoid astronomical II values in small batches
+    df["z_sa"] = zscore_robust(df["sa"]).clip(-5, 50)
+    df["z_holder"] = zscore_robust(df["holder_acc"]).clip(-5, 50)
+    df["z_vs"] = zscore_robust(df["vol_shift"]).clip(-5, 50)
+    df["z_swr"] = zscore_robust(df["swr"]).clip(-5, 50)
+    df["z_vi"] = zscore_robust(df["vol_intensity"]).clip(-5, 50)
+    df["z_sell"] = zscore_robust(df["sell_pressure"]).clip(-5, 50)
 
     # Instability Index
     df["instability"] = (

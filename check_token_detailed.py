@@ -15,7 +15,9 @@ async def check_token(symbol):
         LIMIT 1
     """, symbol)
     if row:
-        print(dict(row))
+        d = dict(row)
+        for k, v in d.items():
+            print(f"{k}: {v}")
     else:
         print("Token not found.")
     await conn.close()

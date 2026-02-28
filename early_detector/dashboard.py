@@ -480,11 +480,12 @@ async def api_analytics():
         liq = float(r["liquidity"] or 0)
         vol = float(r["volume_5m"] or 0)
         
-        # Calculate Velocity (Turnover)
-        velocity = (vol / (liq + 1)) * 100 if liq > 0 else 0
+        # Calculate Velocity (Turnover) 
+        # V5.8: Removal of liq > 0 check to ensure high-volume/untracked tokens show activity
+        velocity = (vol / (liq + 1)) * 100 
         
         # Sanitize for JSON (no NaN or Inf)
-        instability = float(r["instability_index"] or 0)
+        instability = min(float(r["instability_index"] or 0), 500.0)
         mcap = float(r["marketcap"] or 0)
         
         if not math.isfinite(velocity): velocity = 0.0
