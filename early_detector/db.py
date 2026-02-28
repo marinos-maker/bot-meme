@@ -550,13 +550,14 @@ async def cleanup_old_data(days: int = 7) -> int:
         )
         
         # 3. Clean orphaned tokens 
-        # (Tokens with no metrics and not linked to any trade)
+        # (Tokens with no metrics and not linked to any trade, older than 24h)
         res = await pool.execute(
             """
             DELETE FROM tokens 
             WHERE id NOT IN (SELECT DISTINCT token_id FROM token_metrics_timeseries)
             AND id NOT IN (SELECT DISTINCT token_id FROM trades)
             AND id NOT IN (SELECT DISTINCT token_id FROM signals)
+            AND created_at < NOW() - INTERVAL '24 hours'
             """
         )
         
