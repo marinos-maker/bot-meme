@@ -167,6 +167,14 @@ async def insert_metrics(token_id: str, data: dict) -> None:
         data.get("freeze_authority"),
     )
 
+def _clean_dict(row: dict) -> dict:
+    """Utility to convert Decimal values to float for JSON/math compatibility."""
+    d = dict(row)
+    for k, v in d.items():
+        if isinstance(v, Decimal):
+            d[k] = float(v)
+    return d
+
 
 async def get_recent_metrics(token_id: str, minutes: int = 60) -> list[dict]:
     """Fetch recent metric rows for a token within the last N minutes."""
@@ -181,14 +189,7 @@ async def get_recent_metrics(token_id: str, minutes: int = 60) -> list[dict]:
         token_id, str(minutes),
     )
     # Convert Decimal values to float for numpy/math compatibility
-    result = []
-    for r in rows:
-        d = dict(r)
-        for k, v in d.items():
-            if isinstance(v, Decimal):
-                d[k] = float(v)
-        result.append(d)
-    return result
+    return [_clean_dict(r) for r in rows]
 
 
 async def get_all_recent_instability(minutes: int = 60) -> list[dict]:
@@ -206,7 +207,7 @@ async def get_all_recent_instability(minutes: int = 60) -> list[dict]:
         """,
         str(minutes),
     )
-    return [dict(r) for r in rows]
+    return [_clean_dict(r) for r in rows]
 
 
 # ── Signal helpers ────────────────────────────────────────────────────────────
@@ -332,7 +333,7 @@ async def get_all_wallet_performance() -> list[dict]:
     """Retrieve all wallet performance rows for global re-clustering."""
     pool = await get_pool()
     rows = await pool.fetch("SELECT wallet, avg_roi, total_trades, win_rate FROM wallet_performance")
-    return [dict(r) for r in rows]
+    return [_clean_dict(r) for r in rows]
 
 
 async def get_smart_wallets_stats() -> dict[str, dict]:
@@ -349,7 +350,7 @@ async def get_smart_wallets_stats() -> dict[str, dict]:
         """,
         SW_MIN_ROI, SW_MIN_TRADES, SW_MIN_WIN_RATE
     )
-    return {r["wallet"]: dict(r) for r in rows}
+    return {r["wallet"]: _clean_dict(r) for r in rows}
 
 
 async def get_smart_wallets() -> list[str]:

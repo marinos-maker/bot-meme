@@ -299,7 +299,7 @@ async def process_token_to_features(session, tok) -> dict | None:
             # ── Smart Wallet Rotation (SWR V5.0 Weighted) ──
             active_wallets = [b["wallet"] for b in buyers_data] if buyers_data else []
             # Quality of global smart wallets for normalization
-            global_q_score = sum(np.log1p(max(0, s.get("avg_roi", 1.0) - 1.0)) * (s.get("win_rate", 0.0) + 0.1) 
+            global_q_score = sum(np.log1p(max(0, float(s.get("avg_roi", 1.0)) - 1.0)) * (float(s.get("win_rate", 0.0)) + 0.1) 
                                  for s in smart_wallet_stats.values())
             
             swr = compute_swr(active_wallets, smart_wallet_stats, global_q_score)
