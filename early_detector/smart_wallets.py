@@ -108,15 +108,38 @@ def cluster_wallets(stats_df: pd.DataFrame, n_clusters: int = 3) -> pd.DataFrame
 
 
 def compute_swr(active_wallets: list[str],
-                smart_wallet_list: list[str],
-                global_active_smart: int) -> float:
+                smart_wallet_stats: dict[str, dict],
+                global_active_smart_score: float) -> float:
     """
-    Smart Wallet Rotation Ratio (SWR).
+    Weighted Smart Wallet Rotation Ratio (SWR V5.0).
+    
+    Instead of counting wallets, we sum their 'Quality Score':
+    Score = log(ROI) * WinRate
+    
+    This ensures that one 100x trader is more valuable than 10 noise traders.
+    """
+    if not active_wallets:
+        return 0.0
+        
+    local_score = 0.0
+    for wallet in active_wallets:
+        stats = smart_wallet_stats.get(wallet)
+        if stats:
+            # ROI is already verifyed in DB
+            roi = float(stats.get("avg_roi", 1.0))
+            wr = float(stats.get("win_rate", 0.0))
+            
+            # Weighted contribution: high ROI + high WinRate = high signal
+            # We use log to dampen extreme outliers but keep their significance
+            wallet_weight = np.log1p(max(0, roi - 1.0)) * (wr + 0.1)
+            
+            # Penalize if it belongs to noise cluster
+            if stats.get("cluster_label") == "high_volume_noise":
+                wallet_weight *= -0.5
+                
+            local_score += max(0, wallet_weight)
 
-    SWR = (smart wallets active in this token) / (global smart wallets active in 30m)
-    """
-    sw_active = len(set(active_wallets) & set(smart_wallet_list))
-    return sw_active / (global_active_smart + 1e-9)
+    return local_score / (global_active_smart_score + 1e-9)
 
 
 def detect_coordinated_entry(trades: list[dict], window_sec: int = 15) -> list[str]:

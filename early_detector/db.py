@@ -335,19 +335,27 @@ async def get_all_wallet_performance() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def get_smart_wallets() -> list[str]:
-    """Return list of wallet addresses classified as 'smart'."""
+async def get_smart_wallets_stats() -> dict[str, dict]:
+    """Return a dictionary of {wallet_address: {stats}} for verified smart wallets."""
     from early_detector.config import SW_MIN_ROI, SW_MIN_TRADES, SW_MIN_WIN_RATE
     pool = await get_pool()
     rows = await pool.fetch(
         """
-        SELECT wallet FROM wallet_performance
+        SELECT wallet, avg_roi, total_trades, win_rate, cluster_label 
+        FROM wallet_performance
         WHERE (avg_roi > $1 AND total_trades >= $2 AND win_rate > $3)
            OR (avg_roi > 10.0 AND total_trades >= 3)
+           OR (cluster_label IN ('sniper', 'insider'))
         """,
         SW_MIN_ROI, SW_MIN_TRADES, SW_MIN_WIN_RATE
     )
-    return [r["wallet"] for r in rows]
+    return {r["wallet"]: dict(r) for r in rows}
+
+
+async def get_smart_wallets() -> list[str]:
+    """Deprecated: use get_smart_wallets_stats for better signal quality."""
+    stats = await get_smart_wallets_stats()
+    return list(stats.keys())
 
 
 async def get_tracked_tokens(limit: int = 500) -> list[str]:

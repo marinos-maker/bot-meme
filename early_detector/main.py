@@ -18,7 +18,7 @@ from early_detector.config import SCAN_INTERVAL, LOG_FILE, LOG_ROTATION, LOG_LEV
 from early_detector.collector import fetch_token_metrics
 from early_detector.db import (
     get_pool, close_pool, upsert_token, insert_metrics,
-    get_recent_metrics, get_smart_wallets, get_tracked_tokens, upsert_wallet,
+    get_recent_metrics, get_smart_wallets_stats, get_tracked_tokens, upsert_wallet,
     get_unprocessed_tokens, insert_trade,
 )
 from early_detector.features import compute_all_features
@@ -37,7 +37,7 @@ logger.add(LOG_FILE, rotation=LOG_ROTATION, level=LOG_LEVEL,
 
 # ── Global State ──────────────────────────────────────────────────────────────
 token_queue: asyncio.Queue = asyncio.Queue()
-smart_wallet_list: list[str] = []
+smart_wallet_stats: dict[str, dict] = {}
 
 # Fallback experts to ensure SWR works even on cold start
 EXPERT_SEED_WALLETS = [
@@ -296,9 +296,16 @@ async def process_token_to_features(session, tok) -> dict | None:
             buyers_data = metrics.get("buyers_data", [])
             pair_created_at = metrics.get("pair_created_at")
             
-            # ── Smart Wallet Rotation (SWR) ──
+            # ── Smart Wallet Rotation (SWR V5.0 Weighted) ──
             active_wallets = [b["wallet"] for b in buyers_data] if buyers_data else []
-            swr = compute_swr(active_wallets, smart_wallet_list, len(smart_wallet_list))
+            # Quality of global smart wallets for normalization
+            global_q_score = sum(np.log1p(max(0, s.get("avg_roi", 1.0) - 1.0)) * (s.get("win_rate", 0.0) + 0.1) 
+                                 for s in smart_wallet_stats.values())
+            
+            swr = compute_swr(active_wallets, smart_wallet_stats, global_q_score)
+            
+            # Identify if noise bots are present
+            has_noise_bots = any(smart_wallet_stats.get(w, {}).get("cluster_label") == "high_volume_noise" for w in active_wallets)
 
             unique_buyers_real = metrics.get("unique_buyers_50tx", 0)
             unique_buyers = unique_buyers_real if unique_buyers_real > 0 else buys_20m
@@ -360,8 +367,9 @@ async def process_token_to_features(session, tok) -> dict | None:
             liquidity=metrics.get("liquidity", 0) or 0,
             liquidity_series=liquidity_series,
             buyers_volumes=buyers_volumes,
-            swr=swr,
+            swr=swr
         )
+        features["has_noise_bots"] = has_noise_bots
 
         features["token_id"] = token_id
         features["address"] = address
@@ -415,13 +423,13 @@ async def process_token_to_features(session, tok) -> dict | None:
 
 
 async def update_wallet_profiles_job(session):
-    """Periodic job to refresh smart wallet list."""
-    global smart_wallet_list
+    """Periodic job to refresh smart wallet stats."""
+    global smart_wallet_stats
     while True:
         try:
              # Just reload from DB as PumpPortal worker updates stats in real-time
-             smart_wallet_list = await get_smart_wallets()
-             logger.info(f"Refreshed smart wallet list from DB: {len(smart_wallet_list)}")
+             smart_wallet_stats = await get_smart_wallets_stats()
+             logger.info(f"Refreshed smart wallet stats from DB: {len(smart_wallet_stats)}")
         except Exception as e:
             logger.error(f"Wallet list refresh error: {e}")
         
@@ -448,15 +456,16 @@ async def run() -> None:
     logger.info("🚀 Solana Early Detector v4.0 (PumpPortal Only) starting…")
     logger.info("=" * 60)
 
-    global smart_wallet_list
+    global smart_wallet_stats
     await get_pool()
-    smart_wallet_list = await get_smart_wallets()
+    smart_wallet_stats = await get_smart_wallets_stats()
     
     async with aiohttp.ClientSession() as session:
         # Start Workers
+        sw_list = list(smart_wallet_stats.keys())
         producers = [
             asyncio.create_task(discovery_worker(session)),
-            asyncio.create_task(pumpportal_worker(token_queue, smart_wallet_list))
+            asyncio.create_task(pumpportal_worker(token_queue, sw_list))
         ]
         consumers = [asyncio.create_task(processor_worker_batch(i, session)) for i in range(4)]
         cron_jobs = [

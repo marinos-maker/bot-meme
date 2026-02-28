@@ -124,6 +124,19 @@ def calculate_quantitative_degen_score(token_data: dict, confidence: float) -> i
         score -= 5
         logger.debug(f"Creator risk UNKNOWN — penalty: -5")
     
+    swr = token_data.get("swr", 0) or 0
+    if swr > 0:
+        # SWR is now weighted, so a high SWR means high-quality smart activity
+        swr_bonus = min(swr * 40, 25)
+        score += swr_bonus
+        logger.debug(f"Smart Wallet weighted bonus: +{swr_bonus:.1f}, total: {score}")
+    
+    # Noise penalty from clusters
+    has_noise = token_data.get("has_noise_bots", False)
+    if has_noise:
+        score -= 20
+        logger.debug(f"High-volume noise detection penalty: -20, total: {score}")
+
     # Top10 concentration penalty
     top10 = token_data.get("top10_ratio", 0) or 0
     if top10 > 90:

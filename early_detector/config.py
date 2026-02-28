@@ -28,6 +28,8 @@ BIRDEYE_API_KEY: str = os.getenv("BIRDEYE_API_KEY", "")
 
 WALLET_PUBLIC_KEY: str = os.getenv("WALLET_PUBLIC_KEY", "")
 ALCHEMY_RPC_URL: str = os.getenv("ALCHEMY_RPC_URL", "")
+VALIDATION_CLOUD_RPC_URL: str = os.getenv("VALIDATION_CLOUD_RPC_URL", "")
+EXTRA_RPC_URLS: str = os.getenv("EXTRA_RPC_URLS", "")
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")

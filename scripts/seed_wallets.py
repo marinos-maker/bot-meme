@@ -90,45 +90,64 @@ async def refresh_top_wallets_via_helius(limit: int = 150):
     pool = await get_pool()
     from early_detector.helius_client import get_wallet_performance
 
-    # Get the top active wallets that need verification
+    # V5.0: Cache locale - Verifichiamo solo wallet non verificati recentemente (ultime 12 ore)
+    # Inoltre filtriamo i bot ad altissimo volume qui per risparmiare crediti
     rows = await pool.fetch(
-        "SELECT wallet FROM wallet_performance ORDER BY last_active DESC, total_trades DESC LIMIT $1",
+        """
+        SELECT wallet, total_trades 
+        FROM wallet_performance 
+        WHERE (last_active IS NULL OR last_active < NOW() - INTERVAL '12 hours')
+          AND total_trades < 2000
+        ORDER BY total_trades DESC 
+        LIMIT $1
+        """,
         limit
     )
     
     if not rows:
         return 0
 
-    logger.info(f"⏳ Verifying {len(rows)} wallets via Helius real-time stats...")
+    logger.info(f"⏳ Verifying {len(rows)} wallets via Helius/RPC (Parallel)...")
     
-    verified = 0
+    verified_count = 0
+    # Process with limited concurrency (2) to be very safe with Alchemy Free Tier
+    sem = asyncio.Semaphore(2)
+    
     async with aiohttp.ClientSession() as session:
-        for r in rows:
-            wallet_addr = r["wallet"]
-            try:
-                # API Call to Helius
-                stats = await get_wallet_performance(session, wallet_addr)
-                
-                # Only update if they actually have trades on-chain
-                if stats["total_trades"] > 0:
-                    await pool.execute(
-                        """
-                        UPDATE wallet_performance 
-                        SET avg_roi = $1, win_rate = $2, total_trades = $3, last_active = NOW()
-                        WHERE wallet = $4
-                        """,
-                        stats["avg_roi"], stats["win_rate"], stats["total_trades"], wallet_addr
-                    )
-                    verified += 1
-                
-                # Sleep to respect Helius rate limits (be very patient for free tier)
-                await asyncio.sleep(2.0)
-                
-            except Exception as e:
-                logger.debug(f"Helius verification error for {wallet_addr[:8]}: {e}")
+        async def _verify_one(row):
+            nonlocal verified_count
+            wallet_addr = row["wallet"]
+            async with sem:
+                try:
+                    # Preventive Filtering: se il database dice che ha troppi trade, 
+                    # lo marchiamo come noise senza fare chiamate pesanti
+                    if row.get("total_trades", 0) > 1000:
+                         await pool.execute(
+                            "UPDATE wallet_performance SET cluster_label = 'high_volume_noise', last_active = NOW() WHERE wallet = $1",
+                            wallet_addr
+                         )
+                         return
 
-    logger.info(f"✅ Verified {verified} wallets via Helius (Updated ROI/WR)")
-    return verified
+                    stats = await get_wallet_performance(session, wallet_addr)
+                    if stats["total_trades"] > 0:
+                        await pool.execute(
+                            """
+                            UPDATE wallet_performance 
+                            SET avg_roi = $1, win_rate = $2, total_trades = $3, last_active = NOW()
+                            WHERE wallet = $4
+                            """,
+                            stats["avg_roi"], stats["win_rate"], stats["total_trades"], wallet_addr
+                        )
+                        verified_count += 1
+                    await asyncio.sleep(0.5) # Gentle spacing
+                except Exception as e:
+                    logger.debug(f"Verification error for {wallet_addr[:8]}: {e}")
+
+        tasks = [_verify_one(r) for r in rows]
+        await asyncio.gather(*tasks)
+
+    logger.info(f"✅ Verified {verified_count} wallets (Updated ROI/WR)")
+    return verified_count
 
 
 async def recluster_all_wallets() -> dict:
@@ -205,9 +224,16 @@ async def recluster_all_wallets() -> dict:
             for wallet_addr in batch:
                 row = clustered.loc[wallet_addr]
                 label = row.get("cluster_label", "unknown")
+                
+                # V5.0 Safety Gate: If ROI is still placeholder 1.0, it CANNOT be a smart wallet
+                if float(row.get("avg_roi", 1.0)) <= 1.001:
+                    if int(row.get("total_trades", 0)) > 50:
+                        label = "high_volume_noise"
+                    else:
+                        label = "unverified"
+                        
                 values.append((label, wallet_addr))
             
-            # Using executemany for efficiency
             await pool.executemany(
                 "UPDATE wallet_performance SET cluster_label = $1 WHERE wallet = $2",
                 values

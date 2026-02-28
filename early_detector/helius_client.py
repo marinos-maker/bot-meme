@@ -1,13 +1,17 @@
 import aiohttp
 import asyncio
 from loguru import logger
-from early_detector.config import HELIUS_API_KEY, ALCHEMY_RPC_URL
+from early_detector.config import HELIUS_API_KEY, ALCHEMY_RPC_URL, VALIDATION_CLOUD_RPC_URL, EXTRA_RPC_URLS
 
 HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-SOLANA_RPC_URL = ALCHEMY_RPC_URL or HELIUS_RPC_URL
+# List of RPCs for rotating fallback
+extra_list = [u.strip() for u in EXTRA_RPC_URLS.split(",") if u.strip()]
+RPC_POOL = [url for url in [VALIDATION_CLOUD_RPC_URL, ALCHEMY_RPC_URL, HELIUS_RPC_URL] if url] + extra_list
+SOLANA_RPC_URL = RPC_POOL[0] if RPC_POOL else None
 
 # V5.0: Circuit breaker for Helius credits/rate limits
 _HELIUS_DISABLED_UNTIL = 0.0
+_RPC_INDEX = 0 
 
 
 async def get_token_largest_accounts(session: aiohttp.ClientSession, token_mint: str) -> list[dict]:
@@ -248,10 +252,14 @@ def _parse_helius_trades(data: list, wallet_addr: str) -> dict:
 
 
 async def get_wallet_performance_rpc(session: aiohttp.ClientSession, wallet_addr: str, limit: int = 20) -> dict:
-    """Manual ROI calculation via standard Solana RPC methods."""
-    if not SOLANA_RPC_URL:
+    """Manual ROI calculation via rotating Solana RPC pool."""
+    global _RPC_INDEX
+    if not RPC_POOL:
         return {"avg_roi": 1.0, "win_rate": 0.0, "total_trades": 0}
 
+    # Use the current RPC
+    current_rpc = RPC_POOL[_RPC_INDEX % len(RPC_POOL)]
+    
     try:
         # 1. Get signatures
         payload = {
@@ -261,7 +269,13 @@ async def get_wallet_performance_rpc(session: aiohttp.ClientSession, wallet_addr
             "params": [wallet_addr, {"limit": limit}]
         }
         
-        async with session.post(SOLANA_RPC_URL, json=payload, timeout=10) as resp:
+        async with session.post(current_rpc, json=payload, timeout=10) as resp:
+            if resp.status == 429:
+                # Rotate RPC on limit
+                _RPC_INDEX += 1
+                logger.warning(f"RPC {current_rpc[:30]}... limited. Rotating to next...")
+                return await get_wallet_performance_rpc(session, wallet_addr, limit)
+                
             res = await resp.json()
             sigs = [s["signature"] for s in res.get("result", []) if s.get("signature")]
             
@@ -269,8 +283,8 @@ async def get_wallet_performance_rpc(session: aiohttp.ClientSession, wallet_addr
             return {"avg_roi": 1.0, "win_rate": 0.0, "total_trades": 0}
 
         trades = []
-        # Process transactions in batches of 10 for speed
-        batch_size = 10
+        # Process transactions in batches of 5 for stability on free tier
+        batch_size = 5
         for i in range(0, len(sigs), batch_size):
             batch_sigs = sigs[i:i + batch_size]
             batch_payload = [
@@ -283,39 +297,55 @@ async def get_wallet_performance_rpc(session: aiohttp.ClientSession, wallet_addr
                 for j, sig in enumerate(batch_sigs)
             ]
             
-            async with session.post(SOLANA_RPC_URL, json=batch_payload, timeout=12) as resp:
-                batch_txs = await resp.json()
-                
-                # Handling both list response (batch) or single object
-                if not isinstance(batch_txs, list):
-                    batch_txs = [batch_txs]
-                
-                for tx_res in batch_txs:
-                    tx = tx_res.get("result")
-                    if not tx: continue
-
-                    meta = tx.get("meta", {})
-                    # Net SOL Change
-                    keys = tx.get("transaction", {}).get("message", {}).get("accountKeys", [])
-                    user_idx = -1
-                    for idx, key in enumerate(keys):
-                        pk = key.get("pubkey") if isinstance(key, dict) else key
-                        if pk == wallet_addr:
-                            user_idx = idx
+            # Sub-retry logic for Alchemy 429s
+            for r_attempt in range(3):
+                try:
+                    async with session.post(current_rpc, json=batch_payload, timeout=15) as resp:
+                        if resp.status == 429:
+                            # Rotate and retry
+                            _RPC_INDEX += 1
+                            new_rpc = RPC_POOL[_RPC_INDEX % len(RPC_POOL)]
+                            logger.debug(f"RPC rotate: {current_rpc[:20]} -> {new_rpc[:20]}")
+                            return await get_wallet_performance_rpc(session, wallet_addr, limit)
+                            
+                        if resp.status != 200:
                             break
-                    
-                    if user_idx == -1: continue
-                    
-                    sol_change = (meta.get("postBalances", [])[user_idx] - meta.get("preBalances", [])[user_idx]) / 1e9
-                    
-                    # Check for token movements
-                    token_involved = any(tb.get("owner") == wallet_addr for tb in meta.get("preTokenBalances", [])) or \
-                                     any(tb.get("owner") == wallet_addr for tb in meta.get("postTokenBalances", []))
-                    
-                    if abs(sol_change) > 0.005 and token_involved:
-                        trades.append(sol_change)
+
+                        batch_txs = await resp.json()
+                        
+                        # Handling both list response (batch) or single object
+                        if not isinstance(batch_txs, list):
+                            batch_txs = [batch_txs]
+                        
+                        for tx_res in batch_txs:
+                            tx = tx_res.get("result")
+                            if not tx: continue
+
+                            meta = tx.get("meta", {})
+                            keys = tx.get("transaction", {}).get("message", {}).get("accountKeys", [])
+                            user_idx = -1
+                            for idx, key in enumerate(keys):
+                                pk = key.get("pubkey") if isinstance(key, dict) else key
+                                if pk == wallet_addr:
+                                    user_idx = idx
+                                    break
+                            
+                            if user_idx == -1: continue
+                            
+                            sol_change = (meta.get("postBalances", [])[user_idx] - meta.get("preBalances", [])[user_idx]) / 1e9
+                            token_involved = any(tb.get("owner") == wallet_addr for tb in meta.get("preTokenBalances", [])) or \
+                                             any(tb.get("owner") == wallet_addr for tb in meta.get("postTokenBalances", []))
+                            
+                            if abs(sol_change) > 0.005 and token_involved:
+                                trades.append(sol_change)
+                        break # Success
+                except Exception as e:
+                    if "unexpected mimetype" in str(e) or "429" in str(e):
+                        await asyncio.sleep(2.0)
+                        continue
+                    break
             
-            await asyncio.sleep(0.05) 
+            await asyncio.sleep(0.1) 
 
         return _summarize_trades(trades)
 
