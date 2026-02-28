@@ -230,11 +230,14 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
             
         curr_liq = metrics.get("liquidity") or 0
         if curr_liq < 100 and mcap > 0:
-            # V4.5: Increased multiplier from 0.18 to 0.40
-            # On Pump.fun, virtual liquidity is typically higher than 18% of Mcap
-            # during the bonding curve phase.
-            metrics["liquidity"] = mcap * 0.40
-            logger.debug(f"Applied virtual liquidity for {token_address[:8]}: ${metrics['liquidity']:,.0f}")
+            # V5.0: Conservative virtual liquidity estimate (20% of MCap, capped at $2000)
+            # Flagged as synthetic so safety filters know this is NOT real on-chain liquidity
+            virtual_liq = min(mcap * 0.20, 2000.0)
+            metrics["liquidity"] = virtual_liq
+            metrics["liquidity_is_virtual"] = True
+            logger.debug(f"Applied VIRTUAL liquidity for {token_address[:8]}: ${virtual_liq:,.0f} (flagged as synthetic)")
+        else:
+            metrics["liquidity_is_virtual"] = False
             
         # V4.8: Add real-time Pump.fun holder and social enrichment
         pump_meta = await fetch_pump_fun_metrics(session, token_address)

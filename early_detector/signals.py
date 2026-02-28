@@ -6,11 +6,13 @@ import aiohttp
 from loguru import logger
 from early_detector.config import (
     LIQUIDITY_MIN,
+    MCAP_MIN,
     MCAP_MAX,
     TOP10_MAX_RATIO,
     MAX_TOP5_HOLDER_RATIO,
     SPIKE_THRESHOLD,
     HOLDERS_MIN,
+    MAX_KELLY_MICROCAP,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
 )
@@ -18,13 +20,33 @@ from early_detector.db import insert_signal, has_recent_signal
 from early_detector.optimization import AlphaEngine
 
 
+def _has_real_data(token_data: dict, field: str) -> bool:
+    """
+    Check if a risk field contains REAL calculated data vs default/missing.
+    V5.0: Distinguishes between 'data not available' and 'data is genuinely low'.
+    """
+    val = token_data.get(field)
+    if val is None:
+        return False
+    # Check if the value was explicitly set by a calculation (not a fallback default)
+    has_data_flag = token_data.get(f"{field}_verified", False)
+    if has_data_flag:
+        return True
+    # Heuristic: values exactly 0.0, 0.1, or 0.15 are likely defaults
+    if field == "insider_psi" and val == 0.0:
+        return False
+    if field == "creator_risk_score" and val in (0.0, 0.1, 0.15):
+        return False
+    return True
+
+
 def calculate_quantitative_degen_score(token_data: dict, confidence: float) -> int:
     """
     Calculate a quantitative degen score based on available metrics.
-    This provides a numerical score when AI Analyst is disabled.
+    V5.0: Missing data is PENALIZED, not rewarded.
     """
-    logger.debug(f"Calculating quantitative degen score for token: {token_data.get('symbol', 'UNKNOWN')}")
-    logger.debug(f"Input data: confidence={confidence}, token_data={token_data}")
+    symbol = token_data.get('symbol', 'UNKNOWN')
+    logger.debug(f"Calculating quantitative degen score for token: {symbol}")
     
     # Base score from confidence (0-100)
     score = confidence * 100
@@ -32,95 +54,95 @@ def calculate_quantitative_degen_score(token_data: dict, confidence: float) -> i
     
     # Instability Index multiplier (higher II = higher score)
     ii = token_data.get("instability", 0) or 0
-    logger.debug(f"Instability Index: {ii}")
     if ii > 0:
-        # Normalize II to 0-50 range (most tokens have II < 100)
         ii_score = min(ii * 0.5, 50)
         score += ii_score
         logger.debug(f"Added II score: {ii_score}, total: {score}")
     
-    # Liquidity modifier (higher liquidity = more reliable)
+    # Liquidity modifier — PENALIZE virtual liquidity
     liq = token_data.get("liquidity", 0) or 0
-    logger.debug(f"Liquidity: {liq}")
-    if liq > 1000:  # Good liquidity
+    is_virtual_liq = token_data.get("liquidity_is_virtual", False)
+    if is_virtual_liq:
+        score -= 15  # Heavy penalty for unverified liquidity
+        logger.debug(f"Virtual liquidity penalty: -15, total: {score}")
+    elif liq > 5000:  # Strong real liquidity
         score += 10
-        logger.debug(f"Added liquidity bonus: +10, total: {score}")
-    elif liq > 500:  # Moderate liquidity
+    elif liq > 1500:  # Good real liquidity
         score += 5
-        logger.debug(f"Added liquidity bonus: +5, total: {score}")
-    elif liq > 100:  # Low liquidity
+    elif liq > 500:  # Weak liquidity
         score -= 5
-        logger.debug(f"Subtracted liquidity penalty: -5, total: {score}")
-    else:  # Very low liquidity
+    else:
         score -= 10
-        logger.debug(f"Subtracted liquidity penalty: -10, total: {score}")
         
     # Velocity modifier (Volume compared to Liquidity)
     vol = token_data.get("volume_5m", 0) or 0
     velocity = 0
     if liq > 0:
         velocity = (vol / liq) * 100
-        logger.debug(f"Velocity (Vol/Liq): {velocity:.1f}%")
         if velocity > 50:
             score += 15
-            logger.debug(f"Added velocity bonus: +15, total: {score}")
         elif velocity > 20:
             score += 10
-            logger.debug(f"Added velocity bonus: +10, total: {score}")
         elif velocity > 5:
             score += 5
-            logger.debug(f"Added velocity bonus: +5, total: {score}")
     
-    # Market Cap modifier (smaller caps = higher degen potential)
+    # Market Cap modifier
     mcap = token_data.get("marketcap", 0) or 0
-    logger.debug(f"Market Cap: {mcap}")
-    if mcap < 50000:  # Small cap
-        score += 10
-        logger.debug(f"Added small cap bonus: +10, total: {score}")
-    elif mcap < 200000:  # Medium cap
+    if mcap < 5000:  # Dust token — PENALTY
+        score -= 15
+        logger.debug(f"Dust MCap penalty: -15, total: {score}")
+    elif mcap < 50000:
+        score += 5  # Reduced from +10 — small cap is higher risk
+    elif mcap < 200000:
         score += 5
-        logger.debug(f"Added medium cap bonus: +5, total: {score}")
-    elif mcap > 1000000:  # Large cap
+    elif mcap > 1000000:
         score -= 5
-        logger.debug(f"Subtracted large cap penalty: -5, total: {score}")
     
-    # Insider Risk modifier (lower risk = higher score)
+    # Insider Risk modifier — ONLY reward if data is REAL
     psi = token_data.get("insider_psi", 0) or 0
-    logger.debug(f"Insider Risk: {psi}")
-    if psi < 0.2 and (velocity > 5 or liq > 800):  # Low insider risk
-        score += 10
-        logger.debug(f"Added low insider risk bonus: +10, total: {score}")
-    elif psi > 0.5:  # High insider risk
-        score -= 10
-        logger.debug(f"Subtracted high insider risk penalty: -10, total: {score}")
-    
-    # Creator Risk modifier (lower risk = higher score)
-    creator_risk = token_data.get("creator_risk_score", 0) or 0
-    logger.debug(f"Creator Risk: {creator_risk}")
-    if creator_risk < 0.3 and (velocity > 5 or liq > 800):  # Low creator risk
-        score += 5
-        logger.debug(f"Added low creator risk bonus: +5, total: {score}")
-    elif creator_risk > 0.7:  # High creator risk
+    if _has_real_data(token_data, "insider_psi"):
+        if psi < 0.2 and velocity > 5:
+            score += 10
+            logger.debug(f"Real low insider risk bonus: +10")
+        elif psi > 0.5:
+            score -= 15
+            logger.debug(f"High insider risk penalty: -15")
+    else:
+        # Data missing — penalty for unknown risk
         score -= 5
-        logger.debug(f"Subtracted high creator risk penalty: -5, total: {score}")
+        logger.debug(f"Insider risk UNKNOWN — penalty: -5")
+    
+    # Creator Risk modifier — ONLY reward if data is REAL
+    creator_risk = token_data.get("creator_risk_score", 0) or 0
+    if _has_real_data(token_data, "creator_risk_score"):
+        if creator_risk < 0.2:
+            score += 5
+        elif creator_risk > 0.5:
+            score -= 10
+    else:
+        # Data missing — penalty for unknown creator
+        score -= 5
+        logger.debug(f"Creator risk UNKNOWN — penalty: -5")
+    
+    # Top10 concentration penalty
+    top10 = token_data.get("top10_ratio", 0) or 0
+    if top10 > 90:
+        score -= 20
+        logger.debug(f"Extreme Top10 concentration ({top10}%) penalty: -20")
+    elif top10 > 70:
+        score -= 10
     
     # Candle analysis modifier (if available)
     candle_score = token_data.get("candle_score", 0) or 0
-    logger.debug(f"Candle Score: {candle_score}")
-    if candle_score > 0.5:  # Good candle pattern
+    if candle_score > 0.5:
         score += 10
-        logger.debug(f"Added candle pattern bonus: +10, total: {score}")
-    elif candle_score > 0.3:  # Moderate pattern
+    elif candle_score > 0.3:
         score += 5
-        logger.debug(f"Added candle pattern bonus: +5, total: {score}")
     
     # Cap the score to 0-100 range
     score = max(0, min(100, score))
-    logger.debug(f"Final score before rounding: {score}")
-    
-    # Round to nearest integer
     final_score = int(round(score))
-    logger.info(f"Final quantitative degen score for {token_data.get('symbol', 'UNKNOWN')}: {final_score}")
+    logger.info(f"Final quantitative degen score for {symbol}: {final_score}")
     
     return final_score
 
@@ -164,19 +186,24 @@ def passes_trigger(token: dict, threshold: float) -> bool:
         logger.info(f"Trigger rejected: Extreme Volatility expansion (vol_shift={vol_shift:.2f}) for {token.get('symbol')}")
         return False
     
-    # 4. Condition: Liquidity check (Stricter)
+    # 4. Condition: Liquidity check (Stricter — NO exceptions for virtual liq)
+    is_virtual_liq = token.get("liquidity_is_virtual", False)
     if liq < LIQUIDITY_MIN:
-        # CRITICAL: If liquidity is literally 0 or negative, REJECT immediately.
         if liq <= 0:
             logger.info(f"Trigger rejected: ZERO Liquidity for {token.get('symbol') or token.get('address')}")
             return False
 
-        # Reduced exception: allow slightly lower liquidity only if II is very high and it's a very small cap
-        if ii > (threshold * 2.0) and mcap < 200000 and liq >= 500:
-            logger.info(f"Trigger exception: VERY High II ({ii:.3f}) for new token {token.get('symbol') or token.get('address')} with minimum acceptable liq (Liq: {liq:.0f})")
+        # V5.0: Only allow exception for REAL liquidity, never for virtual
+        if not is_virtual_liq and ii > (threshold * 2.0) and mcap < 200000 and liq >= 800:
+            logger.info(f"Trigger exception: VERY High II ({ii:.3f}) with real liq ({liq:.0f}) for {token.get('symbol') or token.get('address')}")
         else:
-            logger.info(f"Trigger rejected: Low Liquidity ({liq:.0f} < {LIQUIDITY_MIN}) for {token.get('symbol') or token.get('address')}")
+            logger.info(f"Trigger rejected: Low Liquidity ({liq:.0f} < {LIQUIDITY_MIN}, virtual={is_virtual_liq}) for {token.get('symbol') or token.get('address')}")
             return False
+    
+    # 4b. MCap minimum check
+    if mcap < MCAP_MIN:
+        logger.info(f"Trigger rejected: MCap too low (${mcap:,.0f} < ${MCAP_MIN:,.0f}) for {token.get('symbol') or token.get('address')}")
+        return False
         
     if mcap > MCAP_MAX:
         logger.info(f"Trigger rejected: MarketCap too High ({mcap:.0f} > {MCAP_MAX}) for {token.get('symbol') or token.get('address')}")
@@ -244,14 +271,19 @@ def passes_candle_analysis(token: dict) -> bool:
 
 def passes_safety_filters(token: dict) -> bool:
     """
-    Stricter Safety Filters (V4.5) to prevent rug pulls:
-    - REJECT if Mint Authority is still enabled.
-    - REJECT if Freeze Authority is still enabled.
-    - REJECT if Top 10 Holders ratio > TOP10_MAX_RATIO.
-    - REJECT if Insider Probability (PSI) > 0.75 (more flexible for meme coins).
-    - REJECT if Creator Risk Score > 0.6 (more flexible for meme coins).
-    - REJECT if Price Spike > 8x in 5m (allow more volatility).
+    Safety Filters V5.0 — Fail-Closed approach for missing data:
+    - REJECT if Mint/Freeze Authority is enabled.
+    - REJECT if Top 10 Holders ratio > 90% for ALL pump tokens (bonding curve or not).
+    - REJECT if Top 10 > TOP10_MAX_RATIO for graduated tokens.
+    - REJECT if Insider/Creator Risk is genuinely high.
+    - REJECT if Price Spike > 5x in 5m.
+    - REJECT if MCap < MCAP_MIN (dust tokens).
     """
+    symbol = token.get('symbol', 'UNKNOWN')
+    address = token.get("address", "")
+    is_pump = address.endswith("pump")
+    mcap = token.get("marketcap") or 0
+    
     # 1. On-chain Authorities (Critical)
     mint_auth = token.get("mint_authority")
     if mint_auth is not None:
@@ -263,55 +295,54 @@ def passes_safety_filters(token: dict) -> bool:
         logger.info(f"Safety: Freeze Authority ENABLED ({freeze_auth[:8]}...) — REJECTED")
         return False
 
-    # 2. Supply Concentration (Fail-Closed V4.6 - with Early Grace)
+    # 2. Supply Concentration — V5.0 STRICT for pump tokens
     top10_ratio = token.get("top10_ratio")
-    mcap = token.get("marketcap") or 0
-    address = token.get("address", "")
-    is_pump = address.endswith("pump")
+    threshold_percent = TOP10_MAX_RATIO * 100  # e.g. 50%
     
     if top10_ratio is None or top10_ratio == 0:
-        if mcap > 100000: # Only reject if it's already a larger cap and we STILL don't know holders
-            logger.info(f"Safety: Top 10 concentration UNKNOWN for large cap ({mcap:,.0f}) — REJECTED")
+        if mcap > 50000:
+            logger.info(f"Safety: Top 10 concentration UNKNOWN for cap ({mcap:,.0f}) — REJECTED {symbol}")
             return False
         else:
-            logger.info(f"Safety Grace: Top 10 concentration UNKNOWN for early cap ({mcap:,.0f}) — PROCEEDING")
+            logger.info(f"Safety Grace: Top 10 UNKNOWN for micro cap ({mcap:,.0f}) — PROCEEDING {symbol}")
     
-    # Dynamic Top 10 rejection
-    # If not on Pump.fun curve (or graduated), we enforce TOP10_MAX_RATIO
-    # Note: TOP10_MAX_RATIO is a scale 0.0-1.0, top10_ratio is 0-100
-    threshold_percent = TOP10_MAX_RATIO * 100
-    
-    if not is_pump or mcap > 100000:
+    if is_pump:
+        # V5.0: Pump tokens with Top10 > 90% are ALWAYS rejected — bonding curve concentration
+        # is a rug risk until the token has enough distribution (graduated or mcap > 50k)
+        if top10_ratio and top10_ratio > 90.0:
+            if mcap < 50000:  # Still on bonding curve with extreme concentration
+                logger.info(f"Safety: Pump token Top10={top10_ratio:.1f}% with MCap=${mcap:,.0f} — REJECTED {symbol} (bonding curve trap)")
+                return False
+            elif top10_ratio > 98.0:
+                logger.info(f"Safety: Extreme Top10={top10_ratio:.1f}% even at MCap=${mcap:,.0f} — REJECTED {symbol}")
+                return False
+    else:
+        # Graduated tokens: enforce TOP10_MAX_RATIO strictly
         if top10_ratio and top10_ratio > threshold_percent:
-            logger.info(f"Safety: High Top 10 concentration ({top10_ratio:.1f}% > {threshold_percent}%) for {token.get('symbol')} — REJECTED")
-            return False
-    elif top10_ratio and top10_ratio > 98.0 and mcap > 250000:
-            # Extreme case for pump tokens that should have graduated but haven't
-            logger.info(f"Safety: Extreme Top 10 for mid-cap Pump token ({top10_ratio:.1f}% / mcap=${mcap:,.0f}) — REJECTED")
+            logger.info(f"Safety: High Top 10 concentration ({top10_ratio:.1f}% > {threshold_percent}%) — REJECTED {symbol}")
             return False
 
     # 2b. Holder Count Filter
     holders = token.get("holders") or 0
-    if holders < HOLDERS_MIN and mcap > 50000: # Only enforce for non-tiny tokens
-        logger.info(f"Safety: Too few holders ({holders} < {HOLDERS_MIN}) for {token.get('symbol')} — REJECTED")
+    if holders < HOLDERS_MIN and mcap > 30000:
+        logger.info(f"Safety: Too few holders ({holders} < {HOLDERS_MIN}) — REJECTED {symbol}")
         return False
 
-    # 3. Behavioral Risk (Stricter for quality)
+    # 3. Behavioral Risk (Only reject on REAL high values)
     insider_psi = (token.get("insider_psi") or 0.0)
-    if insider_psi > 0.65: # Reduced from 0.85 to 0.65
-        logger.info(f"Safety: High Insider Probability ({insider_psi:.2f}) — REJECTED")
+    if _has_real_data(token, "insider_psi") and insider_psi > 0.60:
+        logger.info(f"Safety: High Insider Probability ({insider_psi:.2f}) — REJECTED {symbol}")
         return False
         
-    creator_risk = (token.get("creator_risk_score") or 0.1)
-    if creator_risk > 0.60: # Reduced from 0.75 to 0.60
-        logger.info(f"Safety: High Creator Risk ({creator_risk:.2f}) — REJECTED")
+    creator_risk = (token.get("creator_risk_score") or 0.0)
+    if _has_real_data(token, "creator_risk_score") and creator_risk > 0.55:
+        logger.info(f"Safety: High Creator Risk ({creator_risk:.2f}) — REJECTED {symbol}")
         return False
 
-    # 4. Momentum Spike check (Stricter)
+    # 4. Momentum Spike check
     price_change_5m = (token.get("price_change_5m") or 0.0)
-    from early_detector.config import SPIKE_THRESHOLD
-    if price_change_5m and price_change_5m >= 5.0: # Reduced from 15x to 5x
-        logger.info(f"Safety: Price Spike detected ({price_change_5m:.2f}x) — REJECTED")
+    if price_change_5m and price_change_5m >= 5.0:
+        logger.info(f"Safety: Price Spike detected ({price_change_5m:.2f}x) — REJECTED {symbol}")
         return False
         
     return True
@@ -319,17 +350,29 @@ def passes_safety_filters(token: dict) -> bool:
 
 def passes_quality_gate(token_data: dict, ai_result: dict) -> bool:
     """
-    Final Quality Check (V4.6 Quality & Stability):
-    - Higher bar for entry to avoid 'noise' signals.
+    Final Quality Check V5.0 — Stronger bar for entry:
+    - MCap minimum enforced
+    - Virtual liquidity penalized
+    - Age + Degen Score gate
+    - Quiet token confidence gate
     """
-    # 1. Higher Liquidity Floor (V4.8)
+    symbol = token_data.get('symbol', 'UNKNOWN')
+    
+    # 1. MCap Floor
+    mcap = token_data.get("marketcap") or 0
+    if mcap < MCAP_MIN:
+        logger.info(f"Quality Gate: REJECTED {symbol} - MCap too low (${mcap:,.0f} < ${MCAP_MIN:,.0f})")
+        return False
+    
+    # 2. Liquidity Floor — virtual liquidity gets a HIGHER bar
     liq = token_data.get("liquidity") or 0
-    if liq < 500: # Increased from 100 to 500
-        logger.info(f"Quality Gate: REJECTED {token_data.get('symbol')} - Liquidity too low (${liq:.0f})")
+    is_virtual_liq = token_data.get("liquidity_is_virtual", False)
+    min_liq = 1000 if is_virtual_liq else 500
+    if liq < min_liq:
+        logger.info(f"Quality Gate: REJECTED {symbol} - Liquidity too low (${liq:.0f}, virtual={is_virtual_liq})")
         return False
 
-    # 2. Age Filter (Avoid instant launches without high AI validation)
-    # pair_created_at is in ms from DexScreener
+    # 3. Age Filter
     created_at = token_data.get("pair_created_at")
     import time
     if created_at:
@@ -339,18 +382,17 @@ def passes_quality_gate(token_data: dict, ai_result: dict) -> bool:
         # If less than 15 minutes old, require BETTER degen score
         if age_min < 15:
             degen_score = ai_result.get("degen_score") or token_data.get("degen_score") or 0
-            if degen_score < 55: # Increased from 45 to 55
-                logger.info(f"Quality Gate: REJECTED {token_data.get('symbol')} - Too new ({age_min:.1f}m) and low AI score ({degen_score})")
+            if degen_score < 55:
+                logger.info(f"Quality Gate: REJECTED {symbol} - Too new ({age_min:.1f}m) and low score ({degen_score})")
                 return False
                 
-    # 3. High Confidence Requirement for "Quiet" tokens
-    # If no Smart Wallets and low Insider Probability, we need high bayesian confidence
+    # 4. High Confidence Requirement for "Quiet" tokens
     swr = token_data.get("swr") or 0
     psi = token_data.get("insider_psi") or 0
     if swr == 0 and psi < 0.2:
         conf = token_data.get("confidence") or 0
-        if conf < 0.45:
-            logger.info(f"Quality Gate: REJECTED {token_data.get('symbol')} - Low conviction signal (Conf: {conf:.2f}, No Smart Wallets)")
+        if conf < 0.50:  # Raised from 0.45
+            logger.info(f"Quality Gate: REJECTED {symbol} - Low conviction (Conf: {conf:.2f}, No SWR)")
             return False
 
     return True
@@ -378,31 +420,39 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
         if await has_recent_signal(token_id, minutes=60):
             continue
 
-        # ── Bayesian Win Probability (V4.3) ──
-        # Start with a neutral prior and apply likelihood ratios
-        prior = 0.5
+        # ── Bayesian Win Probability V5.0 ──
+        # Conservative prior — token must EARN confidence through real data
+        prior = 0.35  # Lowered from 0.5 — skeptical by default
         likelihoods = []
 
         # 1. Regime context
         if regime_label == "DEGEN":
-            likelihoods.append(1.1)  # Higher turnover in degen mode often follows through
+            likelihoods.append(1.1)
 
-        # 2. Risk Metrics
-        creator_risk = token_data.get("creator_risk_score") or 0.5
-        if creator_risk < 0.15:
-            likelihoods.append(1.3)
-        elif creator_risk > 0.8:
-            likelihoods.append(0.7)
+        # 2. Risk Metrics — V5.0: ONLY boost if data is REAL
+        creator_risk = token_data.get("creator_risk_score") or 0.0
+        if _has_real_data(token_data, "creator_risk_score"):
+            if creator_risk < 0.15:
+                likelihoods.append(1.3)  # Verified low risk creator
+            elif creator_risk > 0.5:
+                likelihoods.append(0.6)  # Verified risky creator
+        else:
+            # Unknown creator = slight penalty (not a bonus!)
+            likelihoods.append(0.85)
 
         insider_psi = token_data.get("insider_psi") or 0.0
-        if insider_psi < 0.1:
-            likelihoods.append(1.3)
-        elif insider_psi > 0.6:
-            likelihoods.append(0.6)
+        if _has_real_data(token_data, "insider_psi"):
+            if insider_psi < 0.1:
+                likelihoods.append(1.3)  # Verified clean insider profile
+            elif insider_psi > 0.5:
+                likelihoods.append(0.6)
+        else:
+            # Unknown insider risk = slight penalty
+            likelihoods.append(0.85)
 
         # 3. Momentum & Intensity
-        ii = token_data.get("instability_index") or 0
-        if threshold > 0 and (ii / threshold) > 1.5:
+        ii = token_data.get("instability_index") or token_data.get("instability") or 0
+        if threshold > 0 and ii > 0 and (ii / threshold) > 1.5:
             likelihoods.append(1.25)
 
         delta_ii = (token_data.get("delta_instability") or 0.0)
@@ -416,23 +466,40 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
         if swr > 0:
             likelihoods.append(1.5)
 
+        # 5. Virtual Liquidity penalty
+        if token_data.get("liquidity_is_virtual", False):
+            likelihoods.append(0.80)
+
+        # 6. Top10 concentration penalty in Bayesian
+        top10 = token_data.get("top10_ratio") or 0
+        if top10 > 80:
+            likelihoods.append(0.70)
+        elif top10 > 60:
+            likelihoods.append(0.85)
+
         base_confidence = AlphaEngine.calculate_bayesian_confidence(prior, likelihoods)
 
-        # Quarter Kelly sizing
+        # Quarter Kelly sizing with MCap-based cap
         kelly_size = AlphaEngine.calculate_kelly_size(
             win_prob=base_confidence,
-            avg_win_multiplier=0.45,   # Conservative targets
+            avg_win_multiplier=0.40,   # Slightly reduced from 0.45
             avg_loss_multiplier=0.15,
             fractional_kelly=0.25
         )
 
-        # Point 2: Size reduction for moderate insider risk
+        # V5.0: Cap Kelly size for micro-cap tokens
+        mcap = token_data.get("marketcap") or 0
+        if mcap < 50000:
+            kelly_size = min(kelly_size, MAX_KELLY_MICROCAP)
+            logger.debug(f"Kelly capped to {MAX_KELLY_MICROCAP:.0%} for micro-cap ({mcap:,.0f})")
+
+        # Size reduction for moderate insider risk
         insider_psi = (token_data.get("insider_psi") or 0.0)
-        if 0.5 <= insider_psi <= 0.75:
-            kelly_size *= 0.5 # size 50%
+        if _has_real_data(token_data, "insider_psi") and 0.4 <= insider_psi <= 0.60:
+            kelly_size *= 0.5
             logger.info(f"Risk Adjustment: Reducing size by 50% due to moderate insider risk ({insider_psi:.2f})")
 
-        if kelly_size <= 0.01: # Don't trade tiny sizes
+        if kelly_size <= 0.01:
             continue
 
         signal = {
@@ -443,11 +510,16 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
             "instability_index": token_data.get("instability", 0),
             "price": token_data.get("price", 0),
             "liquidity": token_data.get("liquidity", 0),
+            "liquidity_is_virtual": token_data.get("liquidity_is_virtual", False),
             "marketcap": token_data.get("marketcap", 0),
             "confidence": base_confidence,
             "kelly_size": kelly_size,
             "insider_psi": insider_psi,
+            "insider_psi_verified": token_data.get("insider_psi_verified", False),
             "creator_risk": token_data.get("creator_risk_score", 0.1),
+            "creator_risk_score": token_data.get("creator_risk_score", 0.1),
+            "creator_risk_score_verified": token_data.get("creator_risk_score_verified", False),
+            "swr": token_data.get("swr", 0),
             "mint_authority": token_data.get("mint_authority"),
             "freeze_authority": token_data.get("freeze_authority"),
             "top10_ratio": token_data.get("top10_ratio", 0.0),
@@ -563,20 +635,42 @@ async def send_telegram_alert(signal: dict) -> None:
     if not ai_sum or ai_sum.strip() == "":
         ai_sum = "Nessuna analisi AI disponibile"
 
+    # V5.0: Data quality indicators
+    is_virtual_liq = signal.get('liquidity_is_virtual', False)
+    insider_verified = signal.get('insider_psi_verified', False)
+    creator_verified = signal.get('creator_risk_score_verified', False)
+    
+    liq_label = f"${liq:,.0f}" + (" ⚠️ VIRTUAL" if is_virtual_liq else "")
+    psi_label = f"{i_psi:.2f}" if insider_verified else "N/D ⚠️"
+    cr_label = f"{c_risk:.2f}" if creator_verified else "N/D ⚠️"
+    
+    # Build warnings
+    warnings = []
+    if is_virtual_liq:
+        warnings.append("⚠️ Liquidità stimata (non verificata on-chain)")
+    if not insider_verified:
+        warnings.append("⚠️ Insider Risk non calcolato (dati insufficienti)")
+    if not creator_verified:
+        warnings.append("⚠️ Creator Risk non verificato (nuovo creator)")
+    if t10_ratio > 80:
+        warnings.append(f"⚠️ Alta concentrazione Top 10: {t10_ratio:.1f}%")
+    
+    warning_text = "\n".join(warnings) if warnings else "✅ Tutti i dati verificati"
+
     text = (
-        f"🚨 <b>EARLY DETECTOR SIGNAL (V4.0)</b>\n\n"
+        f"🚨 <b>EARLY DETECTOR SIGNAL (V5.0)</b>\n\n"
         f"🪙 <b>{symbol}</b> — {name}\n"
         f"📍 <b>Address:</b> <code>{signal.get('address', 'UNKNOWN')}</code>\n"
         f"📊 Instability Index: <code>{ii:.3f}</code>\n"
         f"💰 Price: <code>${price:.10f}</code>\n"
-        f"💧 Liquidity: <code>${liq:,.0f}</code>\n"
+        f"💧 Liquidity: <code>{liq_label}</code>\n"
         f"📈 Market Cap: <code>${mcap:,.0f}</code>\n"
         f"👥 Top 10 Holders: <code>{t10_ratio:.1f}%</code>\n"
         f"\n"
         f"🎯 <b>Probability Score:</b> <code>{conf:.1%}</code>\n"
         f"⚖️ <b>Recommended Size:</b> <code>{k_size:.1%} of Wallet</code>\n"
-        f"🔥 <b>Insider Risk:</b> <code>{i_psi:.2f}</code>\n"
-        f"⚠️ <b>Creator Risk:</b> <code>{c_risk:.2f}</code>\n"
+        f"🔥 <b>Insider Risk:</b> <code>{psi_label}</code>\n"
+        f"⚠️ <b>Creator Risk:</b> <code>{cr_label}</code>\n"
         f"🤖 <b>AI Degen Score:</b> <code>{d_score}</code>\n"
         f"\n"
         f"🧠 <b>EXIT STRATEGY:</b>\n"
@@ -585,6 +679,8 @@ async def send_telegram_alert(signal: dict) -> None:
         f"🔄 Then: Trailing Stop 20%\n"
         f"\n"
         f"📋 <b>AI Summary:</b>\n<i>{ai_sum}</i>\n"
+        f"\n"
+        f"🔍 <b>Data Quality:</b>\n{warning_text}\n"
         f"\n"
         f"🔗 <a href='https://birdeye.so/token/{signal.get('address', '')}?chain=solana'>Birdeye</a>"
         f" | <a href='https://dexscreener.com/solana/{signal.get('address', '')}'>DexScreener</a>"

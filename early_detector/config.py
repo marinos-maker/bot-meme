@@ -34,6 +34,7 @@ TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # ── Trading Filters ──────────────────────────────────────────────────────────
 LIQUIDITY_MIN: float = float(os.getenv("LIQUIDITY_MIN", "1500"))  # Increased from 500 for better quality
+MCAP_MIN: float = float(os.getenv("MCAP_MIN", "5000"))  # Minimum MCap to avoid dust tokens
 MCAP_MAX: float = float(os.getenv("MCAP_MAX", "10000000"))
 TOP10_MAX_RATIO: float = float(os.getenv("TOP10_MAX_RATIO", "0.50"))  # Stricter: 50% instead of 60%
 
@@ -49,10 +50,10 @@ WEIGHT_VI: float = 2.0        # Volume Intensity (Turnover)
 WEIGHT_SELL: float = 2.0      # Sell Pressure (subtracted)
 
 # ── Smart Wallet Thresholds ───────────────────────────────────────────────────
-# Opzione A: Criteri più inclusivi per identificare smart wallet potenziali
-SW_MIN_ROI: float = 1.1      # Da 1.3 a 1.1 (ROI > 1.1x)
-SW_MIN_TRADES: int = 1       # Da 2 a 1
-SW_MIN_WIN_RATE: float = 0.25 # Da 0.35 a 0.25
+# Criteri realistici per identificare smart wallet reali
+SW_MIN_ROI: float = 2.0       # ROI > 2.0x (profitto reale)
+SW_MIN_TRADES: int = 5        # Almeno 5 trade (pattern verificabile)
+SW_MIN_WIN_RATE: float = 0.35 # 35% win rate (sopra la media)
 
 # ── Timing ────────────────────────────────────────────────────────────────────
 SCAN_INTERVAL: int = int(os.getenv("SCAN_INTERVAL", "15"))  # Reduced for V4.0 latency
@@ -63,6 +64,7 @@ MAX_TOP5_HOLDER_RATIO: float = 0.40
 DEV_WALLET_TIMEOUT_MIN: int = 10
 SPIKE_THRESHOLD: float = 5.0   # 5x in 5 min = too late
 HOLDERS_MIN: int = int(os.getenv("HOLDERS_MIN", "50"))  # Minimum unique holders
+MAX_KELLY_MICROCAP: float = 0.10  # Max 10% Kelly size for tokens < $50k MCap
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_FILE: str = "logs/runtime.log"

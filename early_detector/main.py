@@ -334,6 +334,7 @@ async def process_token_to_features(session, tok) -> dict | None:
                     buyers_volumes.append(b.get("volume", 0))
 
             token_insider_psi = max(insider_scores) if insider_scores else 0.0
+            token_insider_psi_verified = len(insider_scores) > 0  # V5.0: Mark if data is real
         except Exception as fe:
             logger.error(f"❌ Feature extraction error for {address}: {fe}")
             return None
@@ -371,21 +372,27 @@ async def process_token_to_features(session, tok) -> dict | None:
         features["liquidity"] = metrics.get("liquidity") or 0
         features["marketcap"] = metrics.get("marketcap") or 0
         features["top10_ratio"] = metrics.get("top10_ratio")
+        features["liquidity_is_virtual"] = metrics.get("liquidity_is_virtual", False)  # V5.0
         features["insider_psi"] = token_insider_psi
+        features["insider_psi_verified"] = token_insider_psi_verified  # V5.0
         metrics["insider_psi"] = token_insider_psi
         
         # ── Applicazione Reale del Creator Risk Score ──
         from early_detector.db import get_token_creator, get_creator_stats
-        creator_risk_score = 0.15 # Default neutral risk for new creators
+        creator_risk_score = 0.15  # Default neutral risk for new creators
+        creator_risk_verified = False  # V5.0: NOT verified until we have real creator data
         creator_address = await get_token_creator(address)
         if creator_address:
             creator_stats = await get_creator_stats(creator_address)
             if creator_stats:
-                # Il "Rug Ratio" storico diventa il punteggio di rischio effettivo usato dall'algoritmo
+        # Il "Rug Ratio" storico diventa il punteggio di rischio effettivo usato dall'algoritmo
                 creator_risk_score = float(creator_stats.get("rug_ratio", 0.0))
+                creator_risk_verified = True
         
         metrics["creator_risk_score"] = creator_risk_score
+        metrics["creator_risk_score_verified"] = creator_risk_verified
         features["creator_risk_score"] = creator_risk_score
+        features["creator_risk_score_verified"] = creator_risk_verified
         
         features["mint_authority"] = metrics.get("mint_authority")
         features["freeze_authority"] = metrics.get("freeze_authority")
