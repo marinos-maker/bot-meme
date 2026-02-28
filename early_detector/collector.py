@@ -248,14 +248,30 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
             metrics["holders"] = pump_meta.get("holders", metrics.get("holders", 0))
             if pump_meta.get("is_complete"):
                 metrics["bonding_is_complete"] = True
+                metrics["bonding_pct"] = 100.0
+            else:
+                # ── Precise Pump.fun Bonding Calculation (SOL Method) ──
+                # Progress to 85 SOL target (starts at 30 SOL)
+                # Formula matches DexScreener progress closely.
+                v_sol = (pump_meta.get("virtual_sol_reserves") or 30000000000) / 1e9
+                progress = max(0, (v_sol - 30) / 55.0 * 100)
+                metrics["bonding_pct"] = min(100.0, progress)
             
             # Use USD Market Cap from Pump.fun if DexScreener is lagging
-            if metrics.get("marketcap", 0) < 5000 and pump_meta.get("market_cap", 0) > 0:
-                metrics["marketcap"] = pump_meta["market_cap"]
+            pump_mcap = pump_meta.get("market_cap", 0)
+            if (metrics.get("marketcap", 0) < 5000 or metrics.get("marketcap") is None) and pump_mcap > 5000:
+                metrics["marketcap"] = pump_mcap
+            
+            # If metrics show 0 liquidity but we have a real marketcap, apply synthetic base
+            if (metrics.get("liquidity", 0) < 100) and metrics.get("marketcap", 0) > 5000:
+                 virtual_liq = min(metrics["marketcap"] * 0.15, 3000.0)
+                 metrics["liquidity"] = virtual_liq
+                 metrics["liquidity_is_virtual"] = True
 
             if pump_meta.get("twitter"):
                 metrics["has_twitter"] = True
-            logger.debug(f"Pump.fun enrichment for {token_address[:8]}: holders={metrics['holders']}, complete={metrics.get('bonding_is_complete')}")
+            
+            logger.debug(f"Pump.fun enrichment for {token_address[:8]}: holders={metrics['holders']}, complete={metrics.get('bonding_is_complete')}, pct={metrics.get('bonding_pct')}%")
 
     # Integrate Helius metrics if available ONLY FOR VIABLE TOKENS
     # (to save the 1,000,000 requests/month limit)

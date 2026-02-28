@@ -460,7 +460,7 @@ async def api_analytics():
             SELECT t.address, t.symbol, t.name,
                    m.price, m.marketcap, m.liquidity, 
                    m.volume_5m, m.buys_5m, m.sells_5m,
-                   m.instability_index, m.timestamp, m.bonding_is_complete,
+                   m.instability_index, m.timestamp, m.bonding_is_complete, m.bonding_pct,
                    ROW_NUMBER() OVER(PARTITION BY t.address ORDER BY m.timestamp DESC) as rn
             FROM tokens t
             JOIN token_metrics_timeseries m ON m.token_id = t.id
@@ -515,10 +515,12 @@ async def api_analytics():
             # Cap the score to avoid extreme values
             score = min(score, 100.0)
         
-        # Calculate Bonding Curve Progress (Estimate for Pump.fun)
-        # 100% is approx $64k Market Cap on Pump.fun, but priority to DB flag
+        # Calculate Bonding Curve Progress
+        # V5.6: Use precise bonding_pct from DB if available, fallback to estimate
         if r.get("bonding_is_complete"):
             bonding_pct = 100.0
+        elif r.get("bonding_pct") is not None and float(r.get("bonding_pct")) > 0:
+            bonding_pct = float(r.get("bonding_pct"))
         else:
             bonding_pct = min((mcap / 65000) * 100, 100) if r["address"].endswith("pump") else 100
 
