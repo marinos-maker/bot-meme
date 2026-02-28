@@ -1,5 +1,6 @@
 """
 Scoring Engine — cross-sectional z-scores and Instability Index computation.
+V6.0 OPTIMIZED: Higher thresholds, momentum confirmation, better regime detection.
 """
 
 import numpy as np
@@ -40,7 +41,9 @@ def zscore_robust(series: pd.Series) -> pd.Series:
 def detect_regime(df: pd.DataFrame, avg_vol_history: float = 0.0) -> str:
     """
     Detects market regime: 'DEGEN' (turbulent) or 'STABLE' (accumulation).
-    Refined V4.0: Based on Z-score of Total Batch Volume vs History.
+    V6.0 ENHANCED: Multi-factor regime detection with momentum confirmation.
+    
+    Returns: 'DEGEN', 'STABLE', or 'ACCUMULATION'
     """
     if df.empty or "volume_5m" not in df.columns:
         return "STABLE"
@@ -49,14 +52,32 @@ def detect_regime(df: pd.DataFrame, avg_vol_history: float = 0.0) -> str:
     total_vol = df["volume_5m"].sum()
     vol_z = zscore_robust(df["volume_5m"]).mean()
     
-    # 2. Comparison vs History
-    # If the total batch volume is 2x the historical average, it's DEGEN.
-    if avg_vol_history > 0 and total_vol > (avg_vol_history * 2.0):
+    # 2. Comparison vs History - More aggressive threshold
+    # If the total batch volume is 1.5x the historical average, it's DEGEN.
+    if avg_vol_history > 0 and total_vol > (avg_vol_history * 1.5):
         return "DEGEN"
-        
-    # Fallback to local z-score if no history
-    if vol_z > 1.5 or total_vol > 500000:
-        return "DEGEN"
+    
+    # 3. Count high-activity tokens
+    high_activity_count = 0
+    if "vol_intensity" in df.columns:
+        high_activity_count = (df["vol_intensity"] > 1.0).sum()
+    
+    # 4. Check buy pressure dominance
+    buy_dominance = 0.0
+    if "sell_pressure" in df.columns:
+        # sell_pressure = sells / (buys + sells) -> low = buy dominant
+        avg_sell_pressure = df["sell_pressure"].mean()
+        buy_dominance = 1.0 - avg_sell_pressure
+    
+    # 5. Multi-factor decision
+    # DEGEN: High volume + high activity + buy dominance
+    if vol_z > 1.2 or total_vol > 400000:
+        if high_activity_count >= 3 or buy_dominance > 0.55:
+            return "DEGEN"
+    
+    # ACCUMULATION: Low volume but steady buying
+    if total_vol < 100000 and buy_dominance > 0.6 and high_activity_count <= 2:
+        return "ACCUMULATION"
         
     return "STABLE"
 
@@ -83,13 +104,19 @@ def compute_instability(features_df: pd.DataFrame,
     w_vi = weights["w_vi"] if weights else WEIGHT_VI
     w_sell = weights["w_sell"] if weights else WEIGHT_SELL
 
-    # Regime adjustments
+    # Regime adjustments V6.0
     if regime == "DEGEN":
         # In degen mode, prioritize SWR, VI and SA
         w_swr *= 1.5
         w_vi *= 1.8
         w_sa *= 1.2
         w_holder *= 0.8
+    elif regime == "ACCUMULATION":
+        # In accumulation mode, prioritize Holder Acceleration and Stealth
+        w_holder *= 1.5
+        w_sa *= 1.3
+        w_vs *= 1.2  # Volatility shift more important for breakout detection
+        w_vi *= 0.7  # Less emphasis on volume intensity
     
     df = features_df.copy()
 

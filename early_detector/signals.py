@@ -1,5 +1,6 @@
 """
 Signal Detection — trigger logic, safety filters, and Telegram notifications.
+V6.0 OPTIMIZED: Enhanced momentum confirmation, stricter quality gates, better signal filtering.
 """
 
 import aiohttp
@@ -162,12 +163,13 @@ def calculate_quantitative_degen_score(token_data: dict, confidence: float) -> i
 
 def passes_trigger(token: dict, threshold: float) -> bool:
     """
-    Check if a token meets ALL trigger conditions (V4.1 - More permissive):
+    Check if a token meets ALL trigger conditions (V6.0 - Stricter filtering):
     - II > dynamic threshold
-    - dII/dt > -1.0 (more permissive momentum)
-    - price compression (vol_shift < 3.0)
+    - dII/dt > -2.0 (stricter momentum check)
+    - price compression (vol_shift < 10.0)
     - liquidity > LIQUIDITY_MIN
-    - NEW: Analyze first 5-6 candles for breakout patterns
+    - Momentum confirmation required
+    - Candle analysis for breakout patterns
     """
     ii = (token.get("instability") or 0.0)
     delta_ii = (token.get("delta_instability") or 0.0)
@@ -175,6 +177,11 @@ def passes_trigger(token: dict, threshold: float) -> bool:
     
     liq = (token.get("liquidity", 0) or 0)
     mcap = (token.get("marketcap", float("inf")) or float("inf"))
+    
+    # Get volume and buy metrics
+    vol_intensity = token.get("vol_intensity") or 0.0
+    buys_5m = token.get("buys_5m") or 0
+    sells_5m = token.get("sells_5m") or 0
 
     # 1. Condition II > P-Threshold
     if ii < threshold:
@@ -183,54 +190,65 @@ def passes_trigger(token: dict, threshold: float) -> bool:
     # Extra check: if all scores are 0, reject (no variance in batch)
     if ii == 0 and threshold == 0:
         return False
-        
-    # NOTE: We do NOT add a hard floor here — new pump tokens legitimately start at II=0
-    # and build up momentum over cycles. The dynamic threshold above handles minimum II.
     
-    # 2. Condition: Prevent buying into massive dumps, but allow minor dips on high-momentum tokens
-    if delta_ii < -2.5:
-        # If absolute index is very high, allow larger dips before rejecting
-        if ii < (threshold * 2.0) or (delta_ii < -15.0):
-            logger.info(f"Trigger rejected: Sharp falling instability (II={ii:.3f}, dII={delta_ii:.3f}) for {token.get('symbol')}")
+    # V6.0: Minimum II floor to prevent low-quality signals
+    MIN_II_FLOOR = 3.0
+    if ii < MIN_II_FLOOR:
+        logger.info(f"Trigger rejected: II below floor ({ii:.3f} < {MIN_II_FLOOR}) for {token.get('symbol')}")
+        return False
+    
+    # 2. Condition: Prevent buying into dumps - V6.0 Stricter
+    if delta_ii < -2.0:
+        # Only allow if absolute index is EXTREMELY high (2.5x threshold)
+        if ii < (threshold * 2.5):
+            logger.info(f"Trigger rejected: Falling momentum (II={ii:.3f}, dII={delta_ii:.3f}) for {token.get('symbol')}")
             return False
         
-    # 3. Condition: Price Compression
-    # Be more permissive with recent price action (Increased from 5.0 to 12.0)
-    if vol_shift >= 12.0 and ii < (threshold * 1.8):
+    # 3. Condition: Price Compression - V6.0 Stricter
+    if vol_shift >= 10.0 and ii < (threshold * 2.0):
         logger.info(f"Trigger rejected: Extreme Volatility expansion (vol_shift={vol_shift:.2f}) for {token.get('symbol')}")
         return False
     
-    # ── Momentum Fast-Track V5.5 ──
-    # If velocity is EXTREME (> 500% turnover) and buys > 50, 
-    # we bypass standard candle analysis and lower the II bar.
-    vol_intensity = token.get("vol_intensity") or 0.0
-    buys_5m = token.get("buys_5m") or 0
-    if vol_intensity > 5.0 and buys_5m > 50:
-        logger.info(f"🚀 Momentum Fast-Track: HIGH Velocity ({vol_intensity:.1f}) and participation ({buys_5m}) detected for {token.get('symbol')}")
-        return True # Bypass candle check
+    # 4. V6.0: Momentum Confirmation Check
+    # Require either strong volume intensity OR buy pressure dominance
+    buy_ratio = buys_5m / (buys_5m + sells_5m + 1)
+    has_momentum = (
+        (vol_intensity > 1.5) or  # High turnover
+        (buy_ratio > 0.65 and buys_5m > 10)  # Strong buy dominance
+    )
+    
+    if not has_momentum and ii < (threshold * 1.5):
+        logger.info(f"Trigger rejected: No momentum confirmation for {token.get('symbol')} (VI={vol_intensity:.2f}, buy_ratio={buy_ratio:.2f})")
+        return False
 
-    # 4. Condition: Liquidity check
+    # ── Momentum Fast-Track V6.0 ──
+    # Higher bar for fast-track: require EXTREME velocity AND strong participation
+    if vol_intensity > 6.0 and buys_5m > 80 and buy_ratio > 0.55:
+        logger.info(f"🚀 Momentum Fast-Track: EXTREME Velocity ({vol_intensity:.1f}) and participation ({buys_5m}) for {token.get('symbol')}")
+        # Still require minimum safety checks
+        if liq > 0 and mcap > 2000:
+            return True
+
+    # 5. Condition: Liquidity check
     is_virtual_liq = token.get("liquidity_is_virtual", False)
     if liq < LIQUIDITY_MIN:
         if liq <= 0:
             logger.info(f"Trigger rejected: ZERO Liquidity for {token.get('symbol') or token.get('address')}")
             return False
 
-        # Allow exception even for virtual liquidity if momentum is insane (Fast-Track)
-        if vol_intensity > 3.0 and ii > threshold:
-             logger.info(f"Trigger exception: High momentum ({vol_intensity:.1f}) on micro-liquidity (${liq:.0f}) for {token.get('symbol')}")
+        # V6.0: Stricter exception for virtual liquidity
+        if vol_intensity > 4.0 and ii > (threshold * 1.5) and buy_ratio > 0.6:
+             logger.info(f"Trigger exception: Strong momentum ({vol_intensity:.1f}) on micro-liquidity (${liq:.0f}) for {token.get('symbol')}")
         else:
-             # Standard rejection
              logger.info(f"Trigger rejected: Low Liquidity ({liq:.0f} < {LIQUIDITY_MIN}, virtual={is_virtual_liq}) for {token.get('symbol')}")
              return False
     
-    # 4b. MCap minimum check (Lowered to allow the user's micro-caps)
-    # Allows Pump.fun tokens that naturally start at ~$2200
+    # 6. MCap minimum check
     if mcap < 2000:
         logger.info(f"Trigger rejected: MCap extremely low (${mcap:,.0f}) for {token.get('symbol')}")
         return False
         
-    # 5. NEW: First 5-6 Candles Analysis (Early Breakout Detection)
+    # 7. Candle Analysis (Early Breakout Detection)
     if not passes_candle_analysis(token):
         logger.info(f"Trigger rejected: Failed candle analysis for {token.get('symbol') or token.get('address')}")
         return False
@@ -360,11 +378,13 @@ def passes_safety_filters(token: dict) -> bool:
 
 def passes_quality_gate(token_data: dict, ai_result: dict) -> bool:
     """
-    Final Quality Check V5.0 — Stronger bar for entry:
+    Final Quality Check V6.0 — Stronger bar for entry with momentum confirmation:
     - MCap minimum enforced
     - Virtual liquidity penalized
     - Age + Degen Score gate
-    - Quiet token confidence gate
+    - Momentum confirmation required
+    - Candle quality check
+    - Volume/Price divergence check
     """
     symbol = token_data.get('symbol', 'UNKNOWN')
     
@@ -377,33 +397,81 @@ def passes_quality_gate(token_data: dict, ai_result: dict) -> bool:
     # 2. Liquidity Floor — virtual liquidity gets a HIGHER bar, but reasonable for micro-caps
     liq = token_data.get("liquidity") or 0
     is_virtual_liq = token_data.get("liquidity_is_virtual", False)
-    min_liq = 300 if is_virtual_liq else 200
+    min_liq = 400 if is_virtual_liq else 250  # V6.0: Slightly raised
     if liq < min_liq:
         logger.info(f"Quality Gate: REJECTED {symbol} - Liquidity too low (${liq:.0f}, virtual={is_virtual_liq})")
         return False
 
-    # 3. Age Filter
+    # 3. Age Filter with Score Requirement
     created_at = token_data.get("pair_created_at")
     import time
+    age_min = 0
     if created_at:
         now_ms = time.time() * 1000
         age_min = (now_ms - created_at) / (1000 * 60)
         
-        # If less than 15 minutes old, require BETTER degen score
-        if age_min < 15:
-            degen_score = ai_result.get("degen_score") or token_data.get("degen_score") or 0
-            if degen_score < 40:
-                logger.info(f"Quality Gate: REJECTED {symbol} - Too new ({age_min:.1f}m) and low score ({degen_score})")
+        # V6.0: Stricter age-based scoring
+        degen_score = ai_result.get("degen_score") or token_data.get("degen_score") or 0
+        
+        if age_min < 10:
+            # Very new tokens need high scores
+            if degen_score < 50:
+                logger.info(f"Quality Gate: REJECTED {symbol} - Very new ({age_min:.1f}m) needs score >= 50 (has {degen_score})")
+                return False
+        elif age_min < 30:
+            # Tokens under 30 minutes need reasonable scores
+            if degen_score < 35:
+                logger.info(f"Quality Gate: REJECTED {symbol} - New ({age_min:.1f}m) needs score >= 35 (has {degen_score})")
                 return False
                 
-    # 4. High Confidence Requirement for "Quiet" tokens
+    # 4. V6.0: Momentum Confirmation
+    vol_intensity = token_data.get("vol_intensity") or 0
+    buys_5m = token_data.get("buys_5m") or 0
+    sells_5m = token_data.get("sells_5m") or 0
+    buy_ratio = buys_5m / (buys_5m + sells_5m + 1)
+    
+    # Require some form of momentum for ALL tokens
+    has_momentum = (
+        (vol_intensity > 0.5) or  # Some volume turnover
+        (buy_ratio > 0.55 and buys_5m > 5)  # Moderate buy dominance
+    )
+    
+    if not has_momentum:
+        # Only allow if degen score is very high
+        degen_score = ai_result.get("degen_score") or token_data.get("degen_score") or 0
+        if degen_score < 60:
+            logger.info(f"Quality Gate: REJECTED {symbol} - No momentum and low score ({degen_score})")
+            return False
+                
+    # 5. High Confidence Requirement for "Quiet" tokens
     swr = token_data.get("swr") or 0
     psi = token_data.get("insider_psi") or 0
     if swr == 0 and psi < 0.2:
         conf = token_data.get("confidence") or 0
-        if conf < 0.50:  # Raised from 0.45
+        if conf < 0.45:  # V6.0: Raised threshold
             logger.info(f"Quality Gate: REJECTED {symbol} - Low conviction (Conf: {conf:.2f}, No SWR)")
             return False
+    
+    # 6. V6.0: Candle Quality Check (if available)
+    candles = token_data.get("candles", [])
+    if len(candles) >= 3:
+        try:
+            from early_detector.candle_analysis import get_signal_quality
+            quality = get_signal_quality(
+                candles, 
+                [c.get("volume", 0) for c in candles],
+                [c.get("close", 0) for c in candles]
+            )
+            
+            if quality.get("risk_level") == "high":
+                warnings = quality.get("warnings", [])
+                logger.info(f"Quality Gate: REJECTED {symbol} - High risk candle pattern: {warnings}")
+                return False
+                
+            # Store quality info for later use
+            token_data["candle_quality"] = quality
+        except Exception as e:
+            logger.debug(f"Candle quality check skipped: {e}")
 
     return True
 

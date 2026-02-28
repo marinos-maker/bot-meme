@@ -1,28 +1,56 @@
 import aiohttp
 import asyncio
+import time
 from loguru import logger
 from early_detector.config import HELIUS_API_KEY, ALCHEMY_RPC_URL, VALIDATION_CLOUD_RPC_URL, EXTRA_RPC_URLS
 
-HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-# List of RPCs for rotating fallback
+HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}" if HELIUS_API_KEY else ""
+
+# List of RPCs for rotating fallback - VALIDATION CLOUD FIRST (most reliable)
 extra_list = [u.strip() for u in EXTRA_RPC_URLS.split(",") if u.strip()]
-RPC_POOL = [url for url in [VALIDATION_CLOUD_RPC_URL, ALCHEMY_RPC_URL, HELIUS_RPC_URL] if url] + extra_list
+RPC_POOL = [url for url in [VALIDATION_CLOUD_RPC_URL, ALCHEMY_RPC_URL] if url] + extra_list
 SOLANA_RPC_URL = RPC_POOL[0] if RPC_POOL else None
 
-# V5.0: Circuit breaker for Helius credits/rate limits
-_HELIUS_DISABLED_UNTIL = 0.0
-_RPC_INDEX = 0 
+# V5.1: Circuit breaker for rate limits - Global state
+_RPC_DISABLED_UNTIL: dict[str, float] = {}  # url -> disabled_until timestamp
+_RPC_INDEX = 0
+_RATE_LIMIT_COOLDOWN = 60.0  # seconds to disable an RPC after rate limit
+
+def _is_rpc_disabled(url: str) -> bool:
+    """Check if an RPC is temporarily disabled due to rate limiting."""
+    disabled_until = _RPC_DISABLED_UNTIL.get(url, 0.0)
+    return time.time() < disabled_until
+
+def _disable_rpc(url: str, duration: float = _RATE_LIMIT_COOLDOWN) -> None:
+    """Temporarily disable an RPC due to rate limiting."""
+    _RPC_DISABLED_UNTIL[url] = time.time() + duration
+    logger.warning(f"🚫 RPC rate limited, disabled for {duration}s: {url[:50]}...")
+
+def _get_next_available_rpc() -> str | None:
+    """Get the next available RPC from the pool, skipping disabled ones."""
+    global _RPC_INDEX
+    if not RPC_POOL:
+        return None
+    
+    # Try to find an available RPC
+    for _ in range(len(RPC_POOL)):
+        url = RPC_POOL[_RPC_INDEX % len(RPC_POOL)]
+        _RPC_INDEX += 1
+        if not _is_rpc_disabled(url):
+            return url
+    
+    # All RPCs are disabled - reset and return first one anyway
+    logger.warning("⚠️ All RPCs are rate limited, resetting...")
+    _RPC_DISABLED_UNTIL.clear()
+    return RPC_POOL[0] if RPC_POOL else None
 
 
 async def get_token_largest_accounts(session: aiohttp.ClientSession, token_mint: str) -> list[dict]:
     """
-    Fetch the largest token accounts via Helius RPC.
+    Fetch the largest token accounts via Validation Cloud RPC (primary) or Helius fallback.
     NOTE: This only works for established (non-bonding-curve) SPL tokens.
     New Pump.fun tokens (~pump suffix) are NOT yet in SPL format and will fail.
     """
-    if not HELIUS_API_KEY:
-        return []
-
     # Pump.fun bonding-curve tokens are not standard SPL mints until they graduate.
     # Skip the call entirely to save credits — caller should default to 100%.
     if token_mint.endswith("pump"):
@@ -35,19 +63,27 @@ async def get_token_largest_accounts(session: aiohttp.ClientSession, token_mint:
         "params": [token_mint]
     }
 
+    # Try Validation Cloud RPC first (most reliable, no rate limits)
+    rpc_url = _get_next_available_rpc()
+    if not rpc_url:
+        return []
+
     try:
-        async with session.post(HELIUS_RPC_URL, json=payload, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+        async with session.post(rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=8)) as resp:
             if resp.status == 200:
                 data = await resp.json()
                 error = data.get("error")
                 if error:
-                    logger.debug(f"Helius getTokenLargestAccounts error for {token_mint[:8]}: {error.get('message')}")
+                    logger.debug(f"RPC getTokenLargestAccounts error for {token_mint[:8]}: {error.get('message')}")
                     return []
                 return data.get("result", {}).get("value", [])
+            elif resp.status == 429:
+                _disable_rpc(rpc_url)
+                logger.debug(f"RPC rate limited for {token_mint[:8]}, rotating...")
             else:
-                logger.debug(f"Helius getTokenLargestAccounts HTTP {resp.status} for {token_mint[:8]}")
+                logger.debug(f"RPC getTokenLargestAccounts HTTP {resp.status} for {token_mint[:8]}")
     except Exception as e:
-        logger.debug(f"Helius getTokenLargestAccounts request error for {token_mint[:8]}: {e}")
+        logger.debug(f"RPC getTokenLargestAccounts request error for {token_mint[:8]}: {e}")
 
     return []
 
@@ -56,8 +92,18 @@ async def get_asset(session: aiohttp.ClientSession, token_mint: str) -> dict:
     """
     Fetch Digital Asset metadata (creator, supply, etc.) via Helius DAS API.
     NOTE: New Pump.fun tokens may not be indexed yet — returns {} silently.
+    V5.1: Skip for pump tokens (too new) to save API credits.
     """
+    # Pump tokens are too new to be indexed by DAS - skip entirely
+    if token_mint.endswith("pump"):
+        return {}
+    
     if not HELIUS_API_KEY:
+        return {}
+
+    # Check if Helius is rate-limited
+    if HELIUS_RPC_URL and _is_rpc_disabled(HELIUS_RPC_URL):
+        logger.debug(f"Helius rate limited, skipping getAsset for {token_mint[:8]}")
         return {}
 
     payload = {
@@ -78,6 +124,9 @@ async def get_asset(session: aiohttp.ClientSession, token_mint: str) -> dict:
                         logger.debug(f"Helius getAsset error for {token_mint[:8]}: {error.get('message')}")
                     return {}
                 return data.get("result", {})
+            elif resp.status == 429:
+                _disable_rpc(HELIUS_RPC_URL, duration=300.0)  # Disable Helius for 5 min on rate limit
+                logger.warning(f"Helius rate limited on getAsset for {token_mint[:8]}")
             else:
                 logger.debug(f"Helius getAsset HTTP {resp.status} for {token_mint[:8]}")
     except Exception as e:
@@ -90,8 +139,11 @@ async def get_token_buyers(session: aiohttp.ClientSession, token_mint: str, limi
     """
     Fetch the first transactions for a token to identify early buyers.
     This is used for Insider Risk (Coordinated Entry) detection.
+    V5.1: Uses Validation Cloud RPC instead of Helius for reliability.
     """
-    if not HELIUS_API_KEY:
+    # Get available RPC from pool
+    rpc_url = _get_next_available_rpc()
+    if not rpc_url:
         return []
 
     # getSignaturesForAddress to find earliest transactions
@@ -106,7 +158,10 @@ async def get_token_buyers(session: aiohttp.ClientSession, token_mint: str, limi
     }
 
     try:
-        async with session.post(HELIUS_RPC_URL, json=payload_sigs, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+        async with session.post(rpc_url, json=payload_sigs, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status == 429:
+                _disable_rpc(rpc_url)
+                return []
             if resp.status != 200:
                 return []
             data = await resp.json()
@@ -116,34 +171,40 @@ async def get_token_buyers(session: aiohttp.ClientSession, token_mint: str, limi
                 return []
 
             # getTransactions to find who bought
-            payload_txs = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getTransactions",
-                "params": [sigs, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]
-            }
+            payload_txs = [
+                {
+                    "jsonrpc": "2.0",
+                    "id": i,
+                    "method": "getTransaction",
+                    "params": [sig, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]
+                }
+                for i, sig in enumerate(sigs[:10])  # Limit to 10 transactions
+            ]
             
-            async with session.post(HELIUS_RPC_URL, json=payload_txs, timeout=aiohttp.ClientTimeout(total=15)) as resp_tx:
+            async with session.post(rpc_url, json=payload_txs, timeout=aiohttp.ClientTimeout(total=15)) as resp_tx:
+                if resp_tx.status == 429:
+                    _disable_rpc(rpc_url)
+                    return []
                 if resp_tx.status != 200:
                     return []
                 tx_data = await resp_tx.json()
-                transactions = tx_data.get("result", [])
+                
+                # Handle batch response
+                transactions = tx_data if isinstance(tx_data, list) else [tx_data]
                 
                 buyers = []
-                for tx in transactions:
+                for tx_res in transactions:
+                    tx = tx_res.get("result") if isinstance(tx_res, dict) else tx_res
                     if not tx: continue
                     
-                    # Very basic parse for Pump.fun or Raydium buys
-                    # We extract the first account that is not the token mint or program
-                    # This is a heuristic for 'trader'
                     try:
                         account_keys = tx.get("transaction", {}).get("message", {}).get("accountKeys", [])
                         if not account_keys: continue
                         
-                        # The first account in a standard transaction is usually the signer/payer (buyer)
+                        # Find the signer/payer (buyer)
                         signer = None
                         for acc in account_keys:
-                            if acc.get("signer"):
+                            if isinstance(acc, dict) and acc.get("signer"):
                                 signer = acc.get("pubkey")
                                 break
                         
@@ -152,36 +213,33 @@ async def get_token_buyers(session: aiohttp.ClientSession, token_mint: str, limi
                             buyers.append({
                                 "wallet": signer,
                                 "first_trade_time": timestamp,
-                                "volume": 0.0 # Volume is harder to parse from raw tx without heavy lifting
+                                "volume": 0.0
                             })
                     except Exception:
                         continue
                 
                 return buyers
     except Exception as e:
-        logger.debug(f"Helius get_token_buyers error for {token_mint[:8]}: {e}")
+        logger.debug(f"RPC get_token_buyers error for {token_mint[:8]}: {e}")
 
     return []
 
 
 async def get_wallet_performance(session: aiohttp.ClientSession, wallet_addr: str, limit: int = 50) -> dict:
     """
-    Fetch recent history via Helius Enhanced Transaction API 
-    (Fallback to manual RPC parsing if Helius is credit-limited).
+    Fetch recent history via Validation Cloud RPC (primary) with Helius Enhanced API as fallback.
+    V5.1: Prioritizes Validation Cloud for reliability.
     """
-    global _HELIUS_DISABLED_UNTIL
-    now = asyncio.get_event_loop().time()
-
-    if HELIUS_API_KEY and now > _HELIUS_DISABLED_UNTIL:
-        url = f"https://api.helius.xyz/v0/addresses/{wallet_addr}/transactions?api-key={HELIUS_API_KEY}"
-        
-        # V5.0: Retry logic for Helius (Free tier is very sensitive)
+    # Try Helius Enhanced API only if not rate-limited
+    helius_enhanced_url = f"https://api.helius.xyz/v0/addresses/{wallet_addr}/transactions?api-key={HELIUS_API_KEY}" if HELIUS_API_KEY else ""
+    
+    if helius_enhanced_url and not _is_rpc_disabled(helius_enhanced_url):
         max_retries = 2
         retry_delay = 2.0
         
         for attempt in range(max_retries):
             try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                async with session.get(helius_enhanced_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         if data and isinstance(data, list):
@@ -190,22 +248,18 @@ async def get_wallet_performance(session: aiohttp.ClientSession, wallet_addr: st
                     if resp.status == 429:
                         logger.debug(f"Helius 429 for {wallet_addr[:8]} (Attempt {attempt+1}/{max_retries})")
                         if attempt == max_retries - 1:
-                            # Helius is consistently blocking us - disable for 5 minutes
-                            _HELIUS_DISABLED_UNTIL = now + 300.0
-                            logger.warning("Helius rate limit reached. Disabling Helius for 5 min, using RPC fallback.")
+                            _disable_rpc(helius_enhanced_url, duration=300.0)
+                            logger.warning("Helius rate limit reached. Using RPC fallback.")
                         await asyncio.sleep(retry_delay)
                         retry_delay *= 2
                         continue
                     
-                    # If other error (e.g. 500, 401), break to fallback
                     break
             except Exception as e:
                 logger.debug(f"Helius request error for {wallet_addr[:8]}: {e}")
                 break
-            
-    # --- FALLBACK: MANUAL RPC PARSING (ALCHEMY/GENERIC) ---
-    # This is much more reliable as it uses Standard RPC credits (300M on Alchemy)
-    logger.debug(f"Helius failed/limited for {wallet_addr[:8]}. Using RPC fallback...")
+    
+    # --- FALLBACK: MANUAL RPC PARSING (VALIDATION CLOUD / ALCHEMY) ---
     return await get_wallet_performance_rpc(session, wallet_addr, limit=limit)
 
 

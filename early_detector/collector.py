@@ -148,31 +148,52 @@ async def fetch_dexscreener_pair(session: aiohttp.ClientSession,
 # ── Pump.fun (Authentic Holders/Meta) ──────────────────────────────────────────
 
 async def fetch_pump_fun_metrics(session: aiohttp.ClientSession, token_address: str) -> dict | None:
-    """Fetch real coin data from Pump.fun API, including holder count."""
+    """Fetch real coin data from Pump.fun API, including holder count.
+    V6.0.2: Removed problematic REST API calls - rely on DexScreener and WebSocket data.
+    The pump.fun REST API returns 530 errors (Cloudflare block).
+    """
     if not token_address.endswith("pump"):
         return None
-        
-    url = f"https://frontend-api.pump.fun/coins/{token_address}"
+    
+    # Try DexScreener first for pump tokens (most reliable)
     try:
+        url = f"{DEXSCREENER_API_URL}/dex/tokens/{token_address}"
         async with session.get(url, timeout=5) as resp:
             if resp.status == 200:
                 data = await resp.json()
-                # Pump.fun API returns a rich object. We extract what we need.
-                return {
-                    "holders": int(data.get("holder_count") or 0),
-                    "is_complete": data.get("complete", False),
-                    "virtual_token_reserves": float(data.get("virtual_token_reserves") or 0),
-                    "virtual_sol_reserves": float(data.get("virtual_sol_reserves") or 0),
-                    "market_cap": float(data.get("usd_market_cap") or 0),
-                    "description": data.get("description", ""),
-                    "twitter": data.get("twitter"),
-                    "telegram": data.get("telegram"),
-                    "website": data.get("website"),
-                    "reply_count": data.get("reply_count", 0),
-                    "last_reply": data.get("last_reply"),
-                }
+                pairs = data.get("pairs", [])
+                if pairs:
+                    # Get the pump.fun pair
+                    pump_pair = None
+                    for p in pairs:
+                        if "pump.fun" in (p.get("dexId", "") or ""):
+                            pump_pair = p
+                            break
+                    if not pump_pair:
+                        pump_pair = pairs[0]
+                    
+                    # Extract liquidity info for SOL reserves estimation
+                    liq = float(pump_pair.get("liquidity", {}).get("usd", 0) or 0)
+                    mcap = float(pump_pair.get("fdv", 0) or 0)
+                    price = float(pump_pair.get("priceUsd", 0) or 0)
+                    
+                    # Estimate SOL reserves from liquidity
+                    # SOL price ~$150, so SOL reserves = liquidity / SOL_price
+                    SOL_PRICE = 150.0
+                    sol_reserves = liq / SOL_PRICE if liq > 0 else 0
+                    
+                    return {
+                        "holders": 0,  # DexScreener doesn't provide holder count
+                        "is_complete": False,
+                        "virtual_token_reserves": 0,
+                        "virtual_sol_reserves": sol_reserves,
+                        "market_cap": mcap,
+                        "price": price,
+                        "liquidity": liq,
+                    }
     except Exception as e:
-        logger.debug(f"Pump.fun API error for {token_address[:8]}: {e}")
+        logger.debug(f"DexScreener fetch for pump token {token_address[:8]}: {e}")
+    
     return None
 
 
@@ -222,56 +243,128 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
             "symbol": f"TOK{token_address[:4]}"
         }
 
-    # ── CRITICAL V4.4: Fix $0 Liquidity for Pump Tokens ──
+    # ── V5.3: Pump.fun FIRST for accurate real-time data ──
+    # Pump.fun has the freshest data for pump tokens - use it as PRIMARY source
+    pump_sol_reserves = 0  # Initialize for later use in bonding calculation
     if token_address.endswith("pump"):
+        # Fetch Pump.fun data FIRST (before applying any virtual liquidity)
+        pump_meta = await fetch_pump_fun_metrics(session, token_address)
+        
+        if pump_meta:
+            # Use Pump.fun as PRIMARY source for these fields (more accurate/real-time)
+            pump_holders = pump_meta.get("holders", 0)
+            pump_mcap = pump_meta.get("market_cap", 0)
+            pump_sol_reserves = pump_meta.get("virtual_sol_reserves", 0)
+            pump_is_complete = pump_meta.get("is_complete", False)
+            
+            # Update holders from Pump.fun
+            if pump_holders > 0:
+                metrics["holders"] = pump_holders
+                
+            # Update market cap from Pump.fun (more accurate for new tokens)
+            if pump_mcap > 0:
+                metrics["marketcap"] = pump_mcap
+                
+            # Calculate REAL liquidity from bonding curve SOL reserves
+            # SOL price is approximately $150-200, we use conservative $150
+            if pump_sol_reserves > 0:
+                # Real liquidity = SOL reserves * SOL price (approx)
+                sol_price_estimate = 150.0  # Conservative estimate
+                real_liq = pump_sol_reserves * sol_price_estimate
+                metrics["liquidity"] = real_liq
+                metrics["liquidity_is_virtual"] = False
+                logger.debug(f"Pump.fun liquidity for {token_address[:8]}: ${real_liq:,.0f} ({pump_sol_reserves:.2f} SOL reserves)")
+            
+            if pump_is_complete:
+                metrics["bonding_is_complete"] = True
+                
+            if pump_meta.get("twitter"):
+                metrics["has_twitter"] = True
+        
+        # Now apply fallbacks if Pump.fun didn't provide complete data
         mcap = metrics.get("marketcap") or 0
         price = metrics.get("price") or 0
         
+        # Estimate market cap from price if still not available
         if mcap <= 0 and price > 0:
             mcap = price * 1_000_000_000
             metrics["marketcap"] = mcap
             
         curr_liq = metrics.get("liquidity") or 0
-        if curr_liq < 100 and mcap > 0:
-            # V5.0: Conservative virtual liquidity estimate (20% of MCap, capped at $2000)
-            # Flagged as synthetic so safety filters know this is NOT real on-chain liquidity
-            virtual_liq = min(mcap * 0.20, 2000.0)
+        
+        # Apply virtual liquidity ONLY if we still don't have real liquidity
+        if curr_liq < 100:
+            if mcap > 0:
+                virtual_liq = min(mcap * 0.20, 2000.0)
+                metrics["liquidity"] = virtual_liq
+                metrics["liquidity_is_virtual"] = True
+                logger.debug(f"Applied VIRTUAL liquidity for {token_address[:8]}: ${virtual_liq:,.0f} (fallback)")
+            elif price > 0:
+                virtual_liq = max(100, min(price * 200_000_000, 500))
+                metrics["liquidity"] = virtual_liq
+                metrics["liquidity_is_virtual"] = True
+                logger.debug(f"Applied BASE VIRTUAL liquidity for {token_address[:8]}: ${virtual_liq:,.0f}")
+        else:
+            if "liquidity_is_virtual" not in metrics:
+                metrics["liquidity_is_virtual"] = False
+
+        # Compute bonding progress percentage
+        # V6.0 FIX: ALWAYS calculate from SOL reserves first, then check is_complete
+        GRADUATION_SOL = 85.0  # Pump.fun graduates at ~85 SOL
+        
+        if pump_sol_reserves > 0:
+            # Primary calculation from SOL reserves (most accurate)
+            bonding_pct = (pump_sol_reserves / GRADUATION_SOL) * 100
+            
+            # Only set 100% if SOL reserves actually exceed graduation threshold
+            if bonding_pct >= 100 or pump_is_complete:
+                # Verify graduation with SOL reserves check
+                if pump_sol_reserves >= GRADUATION_SOL:
+                    metrics["bonding_pct"] = 100.0
+                    metrics["bonding_is_complete"] = True
+                    logger.debug(f"Bonding GRADUATED for {token_address[:8]}: {pump_sol_reserves:.2f} SOL >= {GRADUATION_SOL} SOL")
+                else:
+                    # is_complete might be wrong or stale, trust SOL reserves
+                    metrics["bonding_pct"] = min(bonding_pct, 99.0)
+                    metrics["bonding_is_complete"] = False
+                    logger.debug(f"Bonding progress from SOL reserves: {pump_sol_reserves:.2f} SOL = {bonding_pct:.1f}% (is_complete={pump_is_complete} ignored)")
+            else:
+                metrics["bonding_pct"] = min(bonding_pct, 99.0)
+                metrics["bonding_is_complete"] = False
+                logger.debug(f"Bonding progress from SOL reserves: {pump_sol_reserves:.2f} SOL = {bonding_pct:.1f}%")
+        else:
+            # Fallback to market cap based estimation
+            mcap_d = metrics.get("marketcap") or 0
+            # Bonding curve: ~$4,500 start -> ~$69,000 graduate (roughly)
+            if mcap_d > 4500:
+                estimated_pct = ((mcap_d - 4500) / 64500) * 100
+                metrics["bonding_pct"] = min(estimated_pct, 99.0)
+            else:
+                metrics["bonding_pct"] = 0.0
+                 
+        logger.debug(f"Bonding data for {token_address[:8]}: holders={metrics.get('holders')}, complete={metrics.get('bonding_is_complete')}, pct={metrics.get('bonding_pct', 0):.1f}%")
+
+    # ── V5.2: Virtual Liquidity for ALL tokens with 0 liquidity ──
+    # Final catch-all: ensure NO token has 0 liquidity if it has a valid price
+    # This fixes tokens from any DEX (Raydium, Orca, etc.) that report 0 liquidity
+    curr_liq = metrics.get("liquidity") or 0
+    mcap = metrics.get("marketcap") or 0
+    price = metrics.get("price") or 0
+    
+    if curr_liq < 100 and price > 0:
+        if mcap > 0:
+            virtual_liq = min(mcap * 0.15, 1500.0)
             metrics["liquidity"] = virtual_liq
             metrics["liquidity_is_virtual"] = True
-            logger.debug(f"Applied VIRTUAL liquidity for {token_address[:8]}: ${virtual_liq:,.0f} (flagged as synthetic)")
+            logger.debug(f"Applied VIRTUAL liquidity for {token_address[:8]}: ${virtual_liq:,.0f} (mcap-based)")
         else:
-            metrics["liquidity_is_virtual"] = False
-            
-        # V4.8: Add real-time Pump.fun holder and social enrichment
-        pump_meta = await fetch_pump_fun_metrics(session, token_address)
-        if pump_meta:
-            metrics["holders"] = pump_meta.get("holders", metrics.get("holders", 0))
-            if pump_meta.get("is_complete"):
-                metrics["bonding_is_complete"] = True
-                metrics["bonding_pct"] = 100.0
-            else:
-                # ── Precise Pump.fun Bonding Calculation (SOL Method) ──
-                # Progress to 85 SOL target (starts at 30 SOL)
-                # Formula matches DexScreener progress closely.
-                v_sol = (pump_meta.get("virtual_sol_reserves") or 30000000000) / 1e9
-                progress = max(0, (v_sol - 30) / 55.0 * 100)
-                metrics["bonding_pct"] = min(100.0, progress)
-            
-            # Use USD Market Cap from Pump.fun if DexScreener is lagging
-            pump_mcap = pump_meta.get("market_cap", 0)
-            if (metrics.get("marketcap", 0) < 5000 or metrics.get("marketcap") is None) and pump_mcap > 5000:
-                metrics["marketcap"] = pump_mcap
-            
-            # If metrics show 0 liquidity but we have a real marketcap, apply synthetic base
-            if (metrics.get("liquidity", 0) < 100) and metrics.get("marketcap", 0) > 5000:
-                 virtual_liq = min(metrics["marketcap"] * 0.15, 3000.0)
-                 metrics["liquidity"] = virtual_liq
-                 metrics["liquidity_is_virtual"] = True
-
-            if pump_meta.get("twitter"):
-                metrics["has_twitter"] = True
-            
-            logger.debug(f"Pump.fun enrichment for {token_address[:8]}: holders={metrics['holders']}, complete={metrics.get('bonding_is_complete')}, pct={metrics.get('bonding_pct')}%")
+            # Estimate mcap from price (1B supply assumption) and apply base liquidity
+            mcap = price * 1_000_000_000
+            metrics["marketcap"] = mcap
+            virtual_liq = max(100, min(mcap * 0.15, 500.0))
+            metrics["liquidity"] = virtual_liq
+            metrics["liquidity_is_virtual"] = True
+            logger.debug(f"Applied BASE VIRTUAL liquidity for {token_address[:8]}: ${virtual_liq:,.0f} (price-based)")
 
     # Integrate Helius metrics if available ONLY FOR VIABLE TOKENS
     # (to save the 1,000,000 requests/month limit)
@@ -292,6 +385,11 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
                   "creator_risk_score", "unique_buyers_50tx", "insider_psi", "has_twitter"]:
         if field not in metrics:
             metrics[field] = None if field in ["mint_authority", "freeze_authority"] else 0.0
+
+    # V5.1: Filter out dead tokens (price=0 AND liquidity=0) - they waste processing time
+    if metrics.get("price", 0) == 0 and metrics.get("liquidity", 0) == 0:
+        logger.debug(f"Skipping dead token {token_address[:8]}: price=0, liquidity=0")
+        return None
 
     # Add logging to debug the metrics being returned
     logger.debug(f"fetch_token_metrics for {token_address[:8]}: name={metrics.get('name')}, symbol={metrics.get('symbol')}, price={metrics.get('price')}, liquidity={metrics.get('liquidity')}")

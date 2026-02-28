@@ -517,13 +517,37 @@ async def api_analytics():
             score = min(score, 100.0)
         
         # Calculate Bonding Curve Progress
-        # V5.6: Use precise bonding_pct from DB if available, fallback to estimate
-        if r.get("bonding_is_complete"):
-            bonding_pct = 100.0
-        elif r.get("bonding_pct") is not None and float(r.get("bonding_pct")) > 0:
+        # V6.0: Use bonding_pct from DB directly (calculated from SOL reserves via PumpPortal)
+        # Only fallback to estimate if no DB value available
+        if r.get("bonding_pct") is not None and float(r.get("bonding_pct")) > 0:
+            # Trust the DB value (calculated from SOL reserves)
             bonding_pct = float(r.get("bonding_pct"))
+            # Cap at 99% unless bonding_is_complete is True AND we have high SOL reserves
+            if r.get("bonding_is_complete") and bonding_pct >= 99.0:
+                bonding_pct = 100.0
+        elif r.get("bonding_is_complete"):
+            # Only trust is_complete if we don't have bonding_pct
+            bonding_pct = 100.0
         else:
-            bonding_pct = min((mcap / 65000) * 100, 100) if r["address"].endswith("pump") else 100
+            # Fallback calculation (only when no DB data available)
+            if r["address"].endswith("pump") and mcap > 0:
+                is_virtual = r.get("liquidity_is_virtual", False)
+                # If we have real DEX liquidity, use the pure AMM formula
+                if not is_virtual and liq > 100 and (liq / mcap) > 0.05:
+                    v_tok_millions = 500 * liq / mcap
+                    tokens_sold = 1073 - v_tok_millions
+                    bonding_pct = max(0.0, min((tokens_sold / 800) * 100, 100))
+                else:
+                    # Synthetic/Lagging liquidity fallback. Use MCap curve estimation.
+                    # Base $4.5k to $65k -> 0% to 100%
+                    estimated_pct = ((mcap - 4500) / 60500) * 100
+                    # Apply a slight curve to match DexScreener's front-loaded progress
+                    if estimated_pct > 0:
+                        bonding_pct = max(0.0, min(pow(estimated_pct / 100, 0.6) * 100, 100))
+                    else:
+                        bonding_pct = 0.0
+            else:
+                bonding_pct = 100.0
 
         data.append({
             "address": r["address"],
