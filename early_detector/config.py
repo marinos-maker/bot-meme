@@ -36,13 +36,13 @@ TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # ── Trading Filters ──────────────────────────────────────────────────────────
-LIQUIDITY_MIN: float = float(os.getenv("LIQUIDITY_MIN", "1500"))  # Increased from 500 for better quality
+LIQUIDITY_MIN: float = float(os.getenv("LIQUIDITY_MIN", "800"))  # Lowered from 1500 to capture early micro-caps
 MCAP_MIN: float = float(os.getenv("MCAP_MIN", "5000"))  # Minimum MCap to avoid dust tokens
 MCAP_MAX: float = float(os.getenv("MCAP_MAX", "10000000"))
 TOP10_MAX_RATIO: float = float(os.getenv("TOP10_MAX_RATIO", "0.50"))  # Stricter: 50% instead of 60%
 
 # ── Scoring ───────────────────────────────────────────────────────────────────
-SIGNAL_PERCENTILE: float = float(os.getenv("SIGNAL_PERCENTILE", "0.70"))  # More selective: 70th percentile
+SIGNAL_PERCENTILE: float = float(os.getenv("SIGNAL_PERCENTILE", "0.65"))  # Lowered from 0.70
 
 # ── Instability Index Weights (default, can be overridden by optimizer) ──────
 WEIGHT_SA: float = 2.0        # Stealth Accumulation

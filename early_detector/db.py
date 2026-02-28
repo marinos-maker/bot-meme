@@ -146,8 +146,9 @@ async def insert_metrics(token_id: str, data: dict) -> None:
             (token_id, price, marketcap, liquidity, holders,
              volume_5m, volume_1h, buys_5m, sells_5m,
              top10_ratio, smart_wallets_active, instability_index,
-             insider_psi, creator_risk_score, mint_authority, freeze_authority)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+             insider_psi, creator_risk_score, mint_authority, freeze_authority,
+             bonding_is_complete)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         """,
         token_id,
         data.get("price"),
@@ -165,6 +166,7 @@ async def insert_metrics(token_id: str, data: dict) -> None:
         data.get("creator_risk_score", 0.0),
         data.get("mint_authority"),
         data.get("freeze_authority"),
+        data.get("bonding_is_complete", False),
     )
 
 def _clean_dict(row: dict) -> dict:

@@ -161,6 +161,9 @@ async def fetch_pump_fun_metrics(session: aiohttp.ClientSession, token_address: 
                 return {
                     "holders": int(data.get("holder_count") or 0),
                     "is_complete": data.get("complete", False),
+                    "virtual_token_reserves": float(data.get("virtual_token_reserves") or 0),
+                    "virtual_sol_reserves": float(data.get("virtual_sol_reserves") or 0),
+                    "market_cap": float(data.get("usd_market_cap") or 0),
                     "description": data.get("description", ""),
                     "twitter": data.get("twitter"),
                     "telegram": data.get("telegram"),
@@ -243,9 +246,16 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
         pump_meta = await fetch_pump_fun_metrics(session, token_address)
         if pump_meta:
             metrics["holders"] = pump_meta.get("holders", metrics.get("holders", 0))
+            if pump_meta.get("is_complete"):
+                metrics["bonding_is_complete"] = True
+            
+            # Use USD Market Cap from Pump.fun if DexScreener is lagging
+            if metrics.get("marketcap", 0) < 5000 and pump_meta.get("market_cap", 0) > 0:
+                metrics["marketcap"] = pump_meta["market_cap"]
+
             if pump_meta.get("twitter"):
                 metrics["has_twitter"] = True
-            logger.debug(f"Pump.fun enrichment for {token_address[:8]}: holders={metrics['holders']}, twitter={metrics.get('has_twitter')}")
+            logger.debug(f"Pump.fun enrichment for {token_address[:8]}: holders={metrics['holders']}, complete={metrics.get('bonding_is_complete')}")
 
     # Integrate Helius metrics if available ONLY FOR VIABLE TOKENS
     # (to save the 1,000,000 requests/month limit)

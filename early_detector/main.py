@@ -104,8 +104,23 @@ async def processor_worker_batch(worker_id: int, session: aiohttp.ClientSession)
     logger.info(f"⚙️ Processor-{worker_id} started")
     while True:
         try:
-            # Get a batch (list of dicts)
+            # ── Batching Buffer V5.1 ──
+            # If we receive a small batch (like a single token from PumpPortal),
+            # we wait up to 8 seconds to accumulate more tokens for better cross-sectional scoring.
             token_batch = await token_queue.get()
+            
+            if len(token_batch) < 5:
+                start_wait = asyncio.get_event_loop().time()
+                while len(token_batch) < 15 and (asyncio.get_event_loop().time() - start_wait) < 8.0:
+                    try:
+                        # Non-blocking peek/get
+                        if not token_queue.empty():
+                            more = token_queue.get_nowait()
+                            token_batch.extend(more)
+                        else:
+                            await asyncio.sleep(2.0)
+                    except asyncio.QueueEmpty:
+                        break
             
             features_rows = []
             

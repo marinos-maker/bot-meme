@@ -1145,6 +1145,40 @@
             border-radius: 3px;
             transition: width 1s ease-out;
         }
+
+        .explosive-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-bottom: 10px;
+            transition: all 0.2s;
+        }
+
+        .explosive-item:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: var(--border-hover);
+            transform: translateY(-1px);
+        }
+
+        .bonding-bar-container {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+
+        .bonding-bar-fill {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 3px;
+            transition: width 0.5s ease;
+        }
     </style>
 </head>
 
@@ -2474,21 +2508,50 @@
                 return;
             }
 
-            container.innerHTML = data.map((item, idx) => `
-                <div class="explosive-item" style="cursor:pointer; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='rgba(255,255,255,0.03)'" onclick="window.open('https://dexscreener.com/solana/${item.address}', '_blank')">
-                    <div style="display:flex; gap:12px; align-items:center;">
-                        <span style="font-weight:700; color:var(--accent); width:20px;">#${idx + 1}</span>
-                        <div>
-                            <div style="font-weight:600; font-size:13px; color:var(--text-primary);">${item.symbol}</div>
-                             <div style="font-size:11px; color:var(--text-muted); cursor:pointer;" onclick="event.stopPropagation(); navigator.clipboard.writeText('${item.address}'); showToast('Address copied!', 'success')">${item.address.slice(0, 4)}...${item.address.slice(-4)}</div>
+            container.innerHTML = data.map((item, idx) => {
+                const isPump = item.address.endsWith('pump');
+                const bondingHtml = isPump ? `
+                    <div style="margin-top: 8px;">
+                        <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:2px;">
+                            <span>Bonding Curve</span>
+                            <span>${item.bonding_pct}%</span>
+                        </div>
+                        <div class="bonding-bar-container">
+                            <div class="bonding-bar-fill" style="width: ${item.bonding_pct}%"></div>
                         </div>
                     </div>
-                    <div style="text-align:right;">
-                        <div style="font-weight:700; color:var(--green);">${item.velocity.toFixed(1)}%</div>
-                        <div style="font-size:10px; color:var(--text-muted);">Turnover</div>
+                ` : '';
+
+                return `
+                <div class="explosive-item">
+                    <div style="flex: 1;" onclick="window.open('https://dexscreener.com/solana/${item.address}', '_blank')">
+                        <div style="display:flex; gap:12px; align-items:center; margin-bottom: 4px;">
+                            <span style="font-weight:800; color:var(--accent); font-size:14px;">#${idx + 1}</span>
+                            <div style="font-weight:700; font-size:14px; color:var(--text-primary);">${item.symbol}</div>
+                            <div style="font-size:10px; color:var(--text-muted); padding: 2px 6px; background: rgba(255,255,255,0.05); border-radius: 4px; cursor:pointer;" onclick="event.stopPropagation(); copyToClipboard('${item.address}')">
+                                ${item.address.slice(0, 4)}...${item.address.slice(-4)}
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:12px; font-size:11px;">
+                             <span class="positive" style="font-weight:600;">🟢 ${item.buys_5m || 0} BUY</span>
+                             <span class="negative" style="font-weight:600;">🔴 ${item.sells_5m || 0} SELL</span>
+                             <span style="color:var(--text-muted)">$${formatNum(item.marketcap)} MC</span>
+                        </div>
+                        ${bondingHtml}
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:6px; align-items:flex-end;">
+                        <div style="text-align:right;">
+                            <div style="font-weight:800; color:var(--green); font-size: 18px;">${item.velocity.toFixed(1)}%</div>
+                            <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Velocity</div>
+                        </div>
+                        <div style="display:flex; gap:4px;">
+                            <button class="buy-btn" style="padding:4px 10px; font-size:10px;" onclick="openTradeModal('${item.address}', '${item.symbol}')">🟢 BUY</button>
+                            <button class="buy-btn" style="background:var(--red); padding:4px 10px; font-size:10px;" onclick="executeQuickSell('${item.address}', '${item.symbol}')">🔴 SELL</button>
+                        </div>
                     </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
         }
     </script>
 

@@ -193,37 +193,42 @@ def passes_trigger(token: dict, threshold: float) -> bool:
         logger.info(f"Trigger rejected: Sharp falling instability (II={ii:.3f}, dII={delta_ii:.3f}) for {token.get('symbol')}")
         return False
         
-    # 3. Condition: Price Compression (vol_shift < 5.0)
-    # Be more permissive with recent price action
-    if vol_shift >= 5.0 and ii < (threshold * 1.5):
+    # 3. Condition: Price Compression
+    # Be more permissive with recent price action (Increased from 5.0 to 12.0)
+    if vol_shift >= 12.0 and ii < (threshold * 1.8):
         logger.info(f"Trigger rejected: Extreme Volatility expansion (vol_shift={vol_shift:.2f}) for {token.get('symbol')}")
         return False
     
-    # 4. Condition: Liquidity check (Stricter — NO exceptions for virtual liq)
+    # ── Momentum Fast-Track V5.5 ──
+    # If velocity is EXTREME (> 500% turnover) and buys > 50, 
+    # we bypass standard candle analysis and lower the II bar.
+    vol_intensity = token.get("vol_intensity") or 0.0
+    buys_5m = token.get("buys_5m") or 0
+    if vol_intensity > 5.0 and buys_5m > 50:
+        logger.info(f"🚀 Momentum Fast-Track: HIGH Velocity ({vol_intensity:.1f}) and participation ({buys_5m}) detected for {token.get('symbol')}")
+        return True # Bypass candle check
+
+    # 4. Condition: Liquidity check
     is_virtual_liq = token.get("liquidity_is_virtual", False)
     if liq < LIQUIDITY_MIN:
         if liq <= 0:
             logger.info(f"Trigger rejected: ZERO Liquidity for {token.get('symbol') or token.get('address')}")
             return False
 
-        # V5.0: Only allow exception for REAL liquidity, never for virtual
-        if not is_virtual_liq and ii > (threshold * 2.0) and mcap < 200000 and liq >= 800:
-            logger.info(f"Trigger exception: VERY High II ({ii:.3f}) with real liq ({liq:.0f}) for {token.get('symbol') or token.get('address')}")
+        # Allow exception even for virtual liquidity if momentum is insane (Fast-Track)
+        if vol_intensity > 3.0 and ii > threshold:
+             logger.info(f"Trigger exception: High momentum ({vol_intensity:.1f}) on micro-liquidity (${liq:.0f}) for {token.get('symbol')}")
         else:
-            logger.info(f"Trigger rejected: Low Liquidity ({liq:.0f} < {LIQUIDITY_MIN}, virtual={is_virtual_liq}) for {token.get('symbol') or token.get('address')}")
-            return False
+             # Standard rejection
+             logger.info(f"Trigger rejected: Low Liquidity ({liq:.0f} < {LIQUIDITY_MIN}, virtual={is_virtual_liq}) for {token.get('symbol')}")
+             return False
     
-    # 4b. MCap minimum check
-    if mcap < MCAP_MIN:
-        logger.info(f"Trigger rejected: MCap too low (${mcap:,.0f} < ${MCAP_MIN:,.0f}) for {token.get('symbol') or token.get('address')}")
+    # 4b. MCap minimum check (Lowered to allow the user's micro-caps)
+    if mcap < (MCAP_MIN * 0.5): # Use 50% of min for fast-track
+        logger.info(f"Trigger rejected: MCap extremely low (${mcap:,.0f}) for {token.get('symbol')}")
         return False
         
-    if mcap > MCAP_MAX:
-        logger.info(f"Trigger rejected: MarketCap too High ({mcap:.0f} > {MCAP_MAX}) for {token.get('symbol') or token.get('address')}")
-        return False
-
     # 5. NEW: First 5-6 Candles Analysis (Early Breakout Detection)
-    # Check if the token shows breakout patterns in the first few candles
     if not passes_candle_analysis(token):
         logger.info(f"Trigger rejected: Failed candle analysis for {token.get('symbol') or token.get('address')}")
         return False

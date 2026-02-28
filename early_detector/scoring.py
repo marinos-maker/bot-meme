@@ -111,6 +111,15 @@ def compute_instability(features_df: pd.DataFrame,
         - w_sell * df["z_sell"]
     )
 
+    # ── Velocity Baseline Boost V5.2 ──
+    # If a token has massive velocity (turnover > 50% in 5 min), it receives an absolute boost.
+    # This captures "p2p" type signals even in small batches where Z-score would be 0.
+    if "vol_intensity" in df.columns:
+        # Boost = log1p(velocity) * weight
+        # Only applies if velocity > 0.5 (50% turnover)
+        vi_boost_mask = df["vol_intensity"] > 0.5
+        df.loc[vi_boost_mask, "instability"] += (np.log1p(df.loc[vi_boost_mask, "vol_intensity"]) * (w_vi * 1.5))
+
     # V4.2 Robustness: Add a tiny epsilon for tokens that at least have some real data
     # This prevents the "all zeros" trap when many RPC calls fail.
     epsilon = 0.0001
@@ -142,7 +151,7 @@ def get_signal_threshold(instability_series: pd.Series,
     - Absolute floor of 3.0: a token must have at least II=3.0 to qualify,
       regardless of batch composition. This prevents epsilon-level signals.
     """
-    MIN_THRESHOLD = 4.5   # Increased from 3.0 — reduces near-zero noise signals
+    MIN_THRESHOLD = 4.0   # Lowered from 4.5 to capture p2p-type signals
     MIN_BATCH_SIZE = 3    # Below this, use MIN_THRESHOLD directly
 
     pct = percentile if percentile is not None else SIGNAL_PERCENTILE
