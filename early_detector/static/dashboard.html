@@ -1235,7 +1235,7 @@
                 <div class="kpi-card">
                     <div class="kpi-label">Smart Wallets</div>
                     <div class="kpi-value" id="kpiSmart">—</div>
-                    <div class="kpi-sub">ROI > 1.1x, WR > 25%</div>
+                    <div class="kpi-sub">ROI > 2.0x, WR > 35%</div>
                 </div>
                 <div class="kpi-card">
                     <div class="kpi-label">Signals Generated</div>
@@ -1396,20 +1396,20 @@
             </div>
         </div>
 
-        <!-- ACTIONS SECTION -->
         <div class="section" id="section-actions">
             <div class="actions-grid">
                 <div class="action-card">
-                    <h3>🌱 Seed Wallets</h3>
-                    <p>Analyze trending Solana tokens and populate the wallet_performance table with fresh data from
-                        Helius.</p>
+                    <h3>🌱 Seed & Re-Cluster Wallets</h3>
+                    <p>Discover wallets from DexScreener trending, re-cluster all wallets in DB using K-Means, and prune
+                        stale entries. No external API keys needed.</p>
                     <button class="action-btn primary" id="seedBtn" onclick="runAction('seed-wallets', this)">
-                        🚀 Run Seed Script
+                        🚀 Run Seed V5.0
                     </button>
                 </div>
                 <div class="action-card">
                     <h3>🔄 Refresh Smart Wallets</h3>
-                    <p>Re-query the database to update the smart wallet list based on current performance criteria.</p>
+                    <p>Re-query the database with V5.0 criteria: ROI > 2.0x, 5+ trades, WR > 35%. Updates the smart
+                        wallet count.</p>
                     <button class="action-btn secondary" id="refreshWalletsBtn"
                         onclick="runAction('refresh-wallets', this)">
                         🧠 Refresh Wallet List
@@ -1417,7 +1417,7 @@
                 </div>
                 <div class="action-card">
                     <h3>📊 Refresh Dashboard</h3>
-                    <p>Reload all dashboard data from the database. Also triggered automatically every 30 seconds when
+                    <p>Reload all dashboard data from the database. Also triggered automatically every 10 seconds when
                         auto-refresh is on.</p>
                     <button class="action-btn secondary" onclick="refreshAll()">
                         🔄 Reload Now
@@ -1776,7 +1776,13 @@
 
             // ALWAYS update Top Picks from the full signal list (not filtered),
             // regardless of whether filteredSignals is empty.
-            const topSignals = data.signals.filter(s => (s.degen_score >= 15 || s.instability_index > 1.5));
+            // V5.0: Stricter quality filter for Top Picks
+            const topSignals = data.signals.filter(s => (
+                s.degen_score >= 50 &&
+                s.marketcap >= 5000 &&
+                s.liquidity >= 1000 &&
+                (s.top10_ratio || 0) < 90
+            ));
             renderTopPicks(topSignals);
 
             if (filteredSignals.length === 0) {
@@ -1830,8 +1836,13 @@
                     return;
                 }
 
-                // Update Top Picks in Overview
-                const topSignals = data.signals.filter(s => (s.degen_score >= 15 || s.instability_index > 1.5));
+                // V5.0: Stricter quality filter for Top Picks in recent signals
+                const topSignals = data.signals.filter(s => (
+                    s.degen_score >= 50 &&
+                    s.marketcap >= 5000 &&
+                    s.liquidity >= 1000 &&
+                    (s.top10_ratio || 0) < 90
+                ));
                 renderTopPicks(topSignals);
 
                 tbody.innerHTML = filteredSignals.map(renderSignalRow).join('');
@@ -2307,13 +2318,18 @@
             const container = document.getElementById('topPicksContainer');
             const grid = document.getElementById('topPicksGrid');
 
-            // Focus on top 3 by score from the last 2 hours
+            // V5.0: Focus on top 3 by score from the last 2 hours
+            // Apply quality filters to prevent dust tokens from appearing
             const now = new Date();
             const top = [...signals]
                 .filter(s => {
                     const dt = new Date(s.timestamp);
                     const ageHrs = (now - dt) / 3600000;
-                    return ageHrs <= 2.0; // Fresh signals only
+                    return ageHrs <= 2.0 &&
+                        s.marketcap >= 5000 &&
+                        s.liquidity >= 1000 &&
+                        (s.top10_ratio || 0) < 90 &&
+                        s.degen_score >= 40;
                 })
                 .sort((a, b) => b.degen_score - a.degen_score)
                 .slice(0, 3);
@@ -2326,7 +2342,9 @@
             container.style.display = 'block';
             grid.innerHTML = top.map(s => {
                 const displayName = s.token_symbol === "???" ? s.token_address.slice(0, 4) : s.token_symbol;
-                const scoreColor = s.degen_score > 70 ? 'var(--green)' : 'var(--yellow)';
+                const scoreColor = s.degen_score > 70 ? 'var(--green)' : s.degen_score > 50 ? 'var(--yellow)' : 'var(--text-muted)';
+                const top10Warn = (s.top10_ratio || 0) > 70 ? `<span style="color:var(--red);font-size:11px;"> ⚠️ Top10: ${(s.top10_ratio || 0).toFixed(0)}%</span>` : '';
+                const liqWarn = s.liquidity < 2000 ? `<span style="color:var(--yellow);font-size:11px;"> ⚠️ Low Liq</span>` : '';
 
                 return `
                     <div class="kpi-card" style="border: 2px solid ${scoreColor}; box-shadow: 0 0 20px rgba(16, 185, 129, 0.1);">
@@ -2339,9 +2357,9 @@
                         </div>
                         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; font-size:13px; color:var(--text-secondary);">
                             <div>Market Cap: <b>$${formatNum(s.marketcap)}</b></div>
-                            <div>Liquidity: <b>$${formatNum(s.liquidity)}</b></div>
+                            <div>Liquidity: <b>$${formatNum(s.liquidity)}</b>${liqWarn}</div>
                             <div>Instability: <b style="color:var(--accent)">${s.instability_index.toFixed(2)}</b></div>
-                            <div>Confidence: <b style="color:var(--green)">${(s.confidence * 100).toFixed(0)}%</b></div>
+                            <div>Confidence: <b style="color:var(--green)">${(s.confidence * 100).toFixed(0)}%</b>${top10Warn}</div>
                         </div>
                         <button class="action-btn primary" onclick="openTradeModal('${s.token_address}', '${displayName}')">
                             ⚡ Quick Buy ${displayName}

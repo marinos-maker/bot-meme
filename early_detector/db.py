@@ -304,6 +304,22 @@ async def upsert_wallet(wallet: str, stats: dict) -> None:
         )
 
 
+async def increment_wallet_trades(wallet: str, cluster: str = "retail") -> None:
+    """Increment trade count for a wallet without touching its calculated ROI/WR."""
+    pool = await get_pool()
+    await pool.execute(
+        """
+        INSERT INTO wallet_performance (wallet, avg_roi, total_trades, win_rate, cluster_label, last_active)
+        VALUES ($1, 1.0, 1, 0.0, $2, NOW())
+        ON CONFLICT (wallet) DO UPDATE SET 
+            total_trades = wallet_performance.total_trades + 1,
+            last_active = NOW(),
+            cluster_label = CASE WHEN wallet_performance.cluster_label = 'new' THEN $2 ELSE wallet_performance.cluster_label END
+        """,
+        wallet, cluster
+    )
+
+
 async def touch_wallet(wallet: str) -> None:
     """Update the last_active timestamp for a wallet without changing stats."""
     pool = await get_pool()

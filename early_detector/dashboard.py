@@ -115,6 +115,9 @@ async def api_signals(limit: int = 50):
         FROM signals s
         JOIN tokens t ON t.id = s.token_id
         LEFT JOIN latest_metrics m ON m.token_id = s.token_id
+        WHERE COALESCE(m.marketcap, s.marketcap) >= 5000
+          AND COALESCE(m.liquidity, s.liquidity) >= 500
+          AND s.confidence >= 0.20
         ORDER BY s.timestamp DESC
         LIMIT $1
         """,
@@ -551,31 +554,42 @@ async def api_analytics():
 
 @app.post("/api/actions/seed-wallets")
 async def action_seed_wallets(background_tasks: BackgroundTasks):
-    """Trigger wallet seed script in background (with Helius fallback)."""
-    def run_seed():
+    """Trigger wallet re-clustering and refresh (V5.0 — no Helius dependency)."""
+    
+    async def run_seed_async():
         try:
-            # Try original Helius script first
-            subprocess.run(
-                [sys.executable, "-m", "scripts.seed_wallets"],
-                cwd=str(Path(__file__).resolve().parent.parent),
-                check=True,
-                timeout=60
-            )
-            return {"message": "Seed script (Helius) started in background"}
-        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
-            logger.warning(f"Helius seed script failed: {e}")
-            logger.info("Falling back to Birdeye alternative...")
-            
-            # Fall back to Birdeye alternative
-            subprocess.run(
-                [sys.executable, "-m", "scripts.seed_wallets_alt"],
-                cwd=str(Path(__file__).resolve().parent.parent),
-                check=True,
-            )
-            return {"message": "Seed script (Birdeye fallback) started in background"}
+            from scripts.seed_wallets import recluster_all_wallets, prune_stale_wallets
+            import aiohttp
+            from scripts.seed_wallets import discover_wallets_from_dexscreener
+            from early_detector.db import upsert_wallet
 
-    background_tasks.add_task(run_seed)
-    return {"status": "started", "message": "Wallet seed script started in background"}
+            # 1. Discover from DexScreener
+            async with aiohttp.ClientSession() as session:
+                new_wallets = await discover_wallets_from_dexscreener(session, limit=15)
+                for w in new_wallets:
+                    try:
+                        await upsert_wallet(w["wallet"], {
+                            "avg_roi": 1.0, "total_trades": 1,
+                            "win_rate": 0.0, "cluster_label": "unknown",
+                        })
+                    except Exception:
+                        pass
+
+            # 2. Prune stale
+            pruned = await prune_stale_wallets(days=7)
+
+            # 3. Re-cluster
+            stats = await recluster_all_wallets()
+
+            logger.info(
+                f"✅ Seed V5.0 complete: {stats['total']} wallets, "
+                f"{stats['smart']} smart, {pruned} pruned"
+            )
+        except Exception as e:
+            logger.error(f"❌ Seed script error: {e}")
+
+    background_tasks.add_task(run_seed_async)
+    return {"status": "started", "message": "Wallet seed V5.0 started (re-cluster + prune)"}
 
 
 @app.post("/api/actions/refresh-wallets")

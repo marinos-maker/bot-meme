@@ -24,6 +24,7 @@ OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v
 AI_MODEL_NAME: str = os.getenv("AI_MODEL_NAME", "z-ai/glm-4.5-air:free")
 SOLSCAN_API_KEY: str = os.getenv("SOLSCAN_API_KEY", "")
 HELIUS_API_KEY: str = os.getenv("HELIUS_API_KEY", "")
+BIRDEYE_API_KEY: str = os.getenv("BIRDEYE_API_KEY", "")
 
 WALLET_PUBLIC_KEY: str = os.getenv("WALLET_PUBLIC_KEY", "")
 ALCHEMY_RPC_URL: str = os.getenv("ALCHEMY_RPC_URL", "")

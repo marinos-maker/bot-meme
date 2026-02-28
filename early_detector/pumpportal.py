@@ -134,15 +134,16 @@ async def pumpportal_worker(token_queue: asyncio.Queue, smart_wallets: list[str]
                             is_trade = tx_type in ["buy", "sell"]
                             
                             # 1. Update wallet activity
+                            from early_detector.db import increment_wallet_trades
                             if trader in known_wallets:
                                 if is_trade:
-                                    await upsert_wallet(trader, {"avg_roi": 1.0, "total_trades": 1, "win_rate": 0.0, "cluster_label": "retail"})
+                                    await increment_wallet_trades(trader, cluster="retail")
                                 else:
                                     await touch_wallet(trader)
                             else:
                                 try:
                                     # Create new entry for previously unknown wallet
-                                    await upsert_wallet(trader, {"avg_roi": 1.0, "total_trades": 1 if is_trade else 0, "win_rate": 0.0, "cluster_label": "new"})
+                                    await increment_wallet_trades(trader, cluster="new")
                                     known_wallets.add(trader)
                                 except Exception as e:
                                     logger.error(f"Error upserting wallet {trader[:8]}: {e}")
