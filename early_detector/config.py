@@ -36,8 +36,8 @@ TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # ── Trading Filters ──────────────────────────────────────────────────────────
-LIQUIDITY_MIN: float = float(os.getenv("LIQUIDITY_MIN", "800"))  # Lowered from 1500 to capture early micro-caps
-MCAP_MIN: float = float(os.getenv("MCAP_MIN", "5000"))  # Minimum MCap to avoid dust tokens
+LIQUIDITY_MIN: float = float(os.getenv("LIQUIDITY_MIN", "400"))  # Lowered to capture early pump tokens with virtual liquidity
+MCAP_MIN: float = float(os.getenv("MCAP_MIN", "2000"))  # Minimum MCap to avoid dust tokens
 MCAP_MAX: float = float(os.getenv("MCAP_MAX", "10000000"))
 TOP10_MAX_RATIO: float = float(os.getenv("TOP10_MAX_RATIO", "0.50"))  # Stricter: 50% instead of 60%
 

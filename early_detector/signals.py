@@ -414,14 +414,14 @@ def passes_quality_gate(token_data: dict, ai_result: dict) -> bool:
         degen_score = ai_result.get("degen_score") or token_data.get("degen_score") or 0
         
         if age_min < 10:
-            # Very new tokens need high scores
-            if degen_score < 50:
-                logger.info(f"Quality Gate: REJECTED {symbol} - Very new ({age_min:.1f}m) needs score >= 50 (has {degen_score})")
+            # Very new tokens need reasonable scores (lowered threshold for early detection)
+            if degen_score < 30:
+                logger.info(f"Quality Gate: REJECTED {symbol} - Very new ({age_min:.1f}m) needs score >= 30 (has {degen_score})")
                 return False
         elif age_min < 30:
             # Tokens under 30 minutes need reasonable scores
-            if degen_score < 35:
-                logger.info(f"Quality Gate: REJECTED {symbol} - New ({age_min:.1f}m) needs score >= 35 (has {degen_score})")
+            if degen_score < 25:
+                logger.info(f"Quality Gate: REJECTED {symbol} - New ({age_min:.1f}m) needs score >= 25 (has {degen_score})")
                 return False
                 
     # 4. V6.0: Momentum Confirmation
@@ -620,11 +620,16 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
         logger.info(f"🧠 Prompting AI Analyst for {signal.get('symbol')}...")
         # Since history is difficult to reconstruct fully here, we pass empty list.
         # Analyst.py uses token_data and handles empty history gracefully.
-        ai_result = await analyze_token_signal(token_data, [])
-        
-        degen_score = ai_result.get("degen_score")
-        if degen_score is None:
+        try:
+            ai_result = await analyze_token_signal(token_data, [])
+            degen_score = ai_result.get("degen_score")
+            if degen_score is None or degen_score == 0:
+                degen_score = calculate_quantitative_degen_score(token_data, base_confidence)
+                logger.info(f"AI returned no score, using quantitative fallback: {degen_score}")
+        except Exception as e:
+            logger.warning(f"AI Analyst failed for {signal.get('symbol')}: {e}. Using quantitative score.")
             degen_score = calculate_quantitative_degen_score(token_data, base_confidence)
+            ai_result = {"degen_score": degen_score, "summary": f"Quantitative score: {degen_score} (AI unavailable)"}
             
         signal["degen_score"] = degen_score
         signal["ai_summary"] = ai_result.get("summary", f"Score: {degen_score}")
