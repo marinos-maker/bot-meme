@@ -387,9 +387,18 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
             metrics[field] = None if field in ["mint_authority", "freeze_authority"] else 0.0
 
     # V5.1: Filter out dead tokens (price=0 AND liquidity=0) - they waste processing time
+    # V6.1: BUT allow pump tokens through - they may be too new for DexScreener
     if metrics.get("price", 0) == 0 and metrics.get("liquidity", 0) == 0:
-        logger.debug(f"Skipping dead token {token_address[:8]}: price=0, liquidity=0")
-        return None
+        # For pump tokens, apply virtual values instead of skipping
+        if token_address.endswith("pump"):
+            logger.debug(f"New pump token {token_address[:8]}: applying virtual values")
+            metrics["price"] = 0.000001  # Minimal price
+            metrics["liquidity"] = 500   # Minimal virtual liquidity
+            metrics["liquidity_is_virtual"] = True
+            metrics["marketcap"] = 1000  # Minimal mcap
+        else:
+            logger.debug(f"Skipping dead token {token_address[:8]}: price=0, liquidity=0")
+            return None
 
     # Add logging to debug the metrics being returned
     logger.debug(f"fetch_token_metrics for {token_address[:8]}: name={metrics.get('name')}, symbol={metrics.get('symbol')}, price={metrics.get('price')}, liquidity={metrics.get('liquidity')}")
