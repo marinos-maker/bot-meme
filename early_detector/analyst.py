@@ -6,11 +6,8 @@ import asyncio
 import json
 from datetime import datetime
 from loguru import logger
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from early_detector.config import GOOGLE_API_KEY, OPENAI_API_KEY, OPENAI_BASE_URL, AI_MODEL_NAME
-
-import warnings
-warnings.filterwarnings("ignore", message=r"This package \(duckduckgo_search\) has been renamed to ddgs!")
 
 # Setup OpenAI
 try:
