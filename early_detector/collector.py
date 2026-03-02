@@ -148,14 +148,36 @@ async def fetch_dexscreener_pair(session: aiohttp.ClientSession,
 # ── Pump.fun (Authentic Holders/Meta) ──────────────────────────────────────────
 
 async def fetch_pump_fun_metrics(session: aiohttp.ClientSession, token_address: str) -> dict | None:
-    """Fetch real coin data from Pump.fun API, including holder count.
-    V6.0.2: Removed problematic REST API calls - rely on DexScreener and WebSocket data.
-    The pump.fun REST API returns 530 errors (Cloudflare block).
+    """Fetch real coin data from Pump.fun API, including holder count and bonding curve data.
+    V6.1: Use direct pump.fun API call to get accurate virtual_sol_reserves for bonding curve calculation.
     """
     if not token_address.endswith("pump"):
         return None
     
-    # Try DexScreener first for pump tokens (most reliable)
+    # V6.1: Try direct pump.fun API first for accurate bonding curve data
+    try:
+        from early_detector.pumpportal import fetch_pumpportal_token_data
+        pump_data = await fetch_pumpportal_token_data(session, token_address)
+        
+        if pump_data and pump_data.get("virtual_sol_reserves", 0) > 0:
+            # We have real bonding curve data from pump.fun API
+            SOL_PRICE = 150.0
+            virtual_sol = pump_data.get("virtual_sol_reserves", 0)
+            
+            return {
+                "holders": pump_data.get("holders", 0),
+                "is_complete": pump_data.get("bonding_is_complete", False),
+                "virtual_token_reserves": pump_data.get("virtual_token_reserves", 0),
+                "virtual_sol_reserves": virtual_sol,
+                "market_cap": pump_data.get("market_cap", 0),
+                "price": pump_data.get("price_sol", 0) * SOL_PRICE if pump_data.get("price_sol") else 0,
+                "liquidity": virtual_sol * SOL_PRICE,  # Real liquidity from SOL reserves
+                "bonding_pct": pump_data.get("bonding_pct", 0),
+            }
+    except Exception as e:
+        logger.debug(f"Pump.fun API fetch for {token_address[:8]}: {e}")
+    
+    # Fallback to DexScreener for pump tokens if pump.fun API fails
     try:
         url = f"{DEXSCREENER_API_URL}/dex/tokens/{token_address}"
         async with session.get(url, timeout=5) as resp:
@@ -309,15 +331,25 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
                 metrics["liquidity_is_virtual"] = False
 
         # Compute bonding progress percentage
-        # V6.0 FIX: ALWAYS calculate from SOL reserves first, then check is_complete
-        GRADUATION_SOL = 85.0  # Pump.fun graduates at ~85 SOL
+        # V6.1 FIX: Correct bonding curve calculation
+        # Pump.fun bonding curve starts at ~30 SOL and graduates at ~85 SOL
+        # The progress should be calculated as: (current - start) / (graduation - start)
+        START_SOL = 30.0      # Pump.fun bonding curve starts at ~30 SOL (~$4,500)
+        GRADUATION_SOL = 85.0  # Pump.fun graduates at ~85 SOL (~$12,750)
+        SOL_PRICE = 150.0      # Approximate SOL price for USD conversions
         
-        if pump_sol_reserves > 0:
+        # Check if we have bonding_pct directly from pump.fun API
+        if pump_meta and pump_meta.get("bonding_pct", 0) > 0:
+            metrics["bonding_pct"] = pump_meta["bonding_pct"]
+            metrics["bonding_is_complete"] = pump_meta.get("is_complete", False)
+            logger.debug(f"Bonding from pump.fun API: {metrics['bonding_pct']:.1f}%")
+        elif pump_sol_reserves > 0:
             # Primary calculation from SOL reserves (most accurate)
-            bonding_pct = (pump_sol_reserves / GRADUATION_SOL) * 100
+            # Correct formula: progress = (current - start) / (end - start)
+            bonding_pct = ((pump_sol_reserves - START_SOL) / (GRADUATION_SOL - START_SOL)) * 100
             
             # Only set 100% if SOL reserves actually exceed graduation threshold
-            if bonding_pct >= 100 or pump_is_complete:
+            if pump_sol_reserves >= GRADUATION_SOL or pump_is_complete:
                 # Verify graduation with SOL reserves check
                 if pump_sol_reserves >= GRADUATION_SOL:
                     metrics["bonding_pct"] = 100.0
@@ -329,17 +361,50 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
                     metrics["bonding_is_complete"] = False
                     logger.debug(f"Bonding progress from SOL reserves: {pump_sol_reserves:.2f} SOL = {bonding_pct:.1f}% (is_complete={pump_is_complete} ignored)")
             else:
-                metrics["bonding_pct"] = min(bonding_pct, 99.0)
+                metrics["bonding_pct"] = max(0.0, min(bonding_pct, 99.0))
                 metrics["bonding_is_complete"] = False
                 logger.debug(f"Bonding progress from SOL reserves: {pump_sol_reserves:.2f} SOL = {bonding_pct:.1f}%")
         else:
-            # Fallback to market cap based estimation
-            mcap_d = metrics.get("marketcap") or 0
-            # Bonding curve: ~$4,500 start -> ~$69,000 graduate (roughly)
-            if mcap_d > 4500:
-                estimated_pct = ((mcap_d - 4500) / 64500) * 100
-                metrics["bonding_pct"] = min(estimated_pct, 99.0)
+            # Fallback: Calculate from liquidity or market cap
+            liq = metrics.get("liquidity") or 0
+            mcap = metrics.get("marketcap") or 0
+            
+            if liq > (START_SOL * SOL_PRICE):  # More than ~$4,500 liquidity
+                # Estimate SOL reserves from liquidity
+                sol_reserves_est = liq / SOL_PRICE
+                bonding_pct = ((sol_reserves_est - START_SOL) / (GRADUATION_SOL - START_SOL)) * 100
+                metrics["bonding_pct"] = max(0.0, min(bonding_pct, 99.0))
+                logger.debug(f"Bonding progress from liquidity: ${liq:.0f} = {sol_reserves_est:.2f} SOL = {bonding_pct:.1f}%")
+            elif mcap > 4500:  # More than ~$4,500 market cap
+                # V6.1: Estimate bonding progress from market cap
+                # Pump.fun bonding curve uses a constant product formula:
+                # price = k * SOL_reserves / token_reserves
+                # 
+                # The bonding curve progresses from ~$4,500 (0%) to ~$69,000 (100%)
+                # But this is NOT linear - the price increases exponentially
+                #
+                # For a more accurate estimate, we use the DexScreener approach:
+                # Progress ≈ (MCAP - START_MCAP) / (GRAD_MCAP - START_MCAP)
+                # Where START_MCAP ≈ $4,500 and GRAD_MCAP ≈ $69,000
+                #
+                # However, the progress shown by DexScreener is based on SOL reserves
+                # not market cap. The relationship is:
+                # bonding_pct = (SOL_reserves - 30) / 55 * 100
+                #
+                # Market cap scales with SOL reserves, but not linearly.
+                # Empirical observation: for tokens around $10K-20K MCAP,
+                # progress is roughly 50-80%
+                #
+                # Let's use a conservative linear approximation:
+                START_MCAP = 4500.0
+                GRADUATION_MCAP = 69000.0
+                
+                # Linear interpolation from market cap
+                bonding_pct = ((mcap - START_MCAP) / (GRADUATION_MCAP - START_MCAP)) * 100
+                metrics["bonding_pct"] = max(0.0, min(bonding_pct, 99.0))
+                logger.debug(f"Bonding progress from MCAP ${mcap:.0f}: {bonding_pct:.1f}%")
             else:
+                # Token is very early, show 0% or minimal progress
                 metrics["bonding_pct"] = 0.0
                  
         logger.debug(f"Bonding data for {token_address[:8]}: holders={metrics.get('holders')}, complete={metrics.get('bonding_is_complete')}, pct={metrics.get('bonding_pct', 0):.1f}%")

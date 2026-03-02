@@ -517,8 +517,14 @@ async def api_analytics():
             score = min(score, 100.0)
         
         # Calculate Bonding Curve Progress
-        # V6.0: Use bonding_pct from DB directly (calculated from SOL reserves via PumpPortal)
-        # Only fallback to estimate if no DB value available
+        # V6.1 FIX: Correct bonding curve calculation
+        # Pump.fun bonding curve starts at ~30 SOL and graduates at ~85 SOL
+        # Formula: progress = (current - start) / (graduation - start)
+        START_LIQ = 4500.0    # ~30 SOL * $150 = $4,500 (bonding curve start)
+        GRADUATION_LIQ = 12750.0  # ~85 SOL * $150 = $12,750 (graduation threshold)
+        START_MCAP = 4500.0   # Starting market cap
+        GRADUATION_MCAP = 69000.0  # Graduation market cap (~85 SOL * ~$800/SOL in bonding curve terms)
+        
         if r.get("bonding_pct") is not None and float(r.get("bonding_pct")) > 0:
             # Trust the DB value (calculated from SOL reserves)
             bonding_pct = float(r.get("bonding_pct"))
@@ -529,24 +535,24 @@ async def api_analytics():
             # Only trust is_complete if we don't have bonding_pct
             bonding_pct = 100.0
         else:
-            # Fallback calculation (only when no DB data available)
-            if r["address"].endswith("pump") and mcap > 0:
-                is_virtual = r.get("liquidity_is_virtual", False)
-                # If we have real DEX liquidity, use the pure AMM formula
-                if not is_virtual and liq > 100 and (liq / mcap) > 0.05:
-                    v_tok_millions = 500 * liq / mcap
-                    tokens_sold = 1073 - v_tok_millions
-                    bonding_pct = max(0.0, min((tokens_sold / 800) * 100, 100))
+            # Fallback calculation from liquidity or market cap
+            if r["address"].endswith("pump"):
+                if liq > START_LIQ:
+                    # Calculate from liquidity
+                    bonding_pct = ((liq - START_LIQ) / (GRADUATION_LIQ - START_LIQ)) * 100
+                    bonding_pct = max(0.0, min(bonding_pct, 99.0))
+                elif mcap > START_MCAP:
+                    # V6.1: Fallback to market cap calculation
+                    # Linear interpolation from market cap
+                    # START_MCAP ≈ $4,500 (0%) to GRADUATION_MCAP ≈ $69,000 (100%)
+                    GRADUATION_MCAP = 69000.0
+                    bonding_pct = ((mcap - START_MCAP) / (GRADUATION_MCAP - START_MCAP)) * 100
+                    bonding_pct = max(0.0, min(bonding_pct, 99.0))
                 else:
-                    # Synthetic/Lagging liquidity fallback. Use MCap curve estimation.
-                    # Base $4.5k to $65k -> 0% to 100%
-                    estimated_pct = ((mcap - 4500) / 60500) * 100
-                    # Apply a slight curve to match DexScreener's front-loaded progress
-                    if estimated_pct > 0:
-                        bonding_pct = max(0.0, min(pow(estimated_pct / 100, 0.6) * 100, 100))
-                    else:
-                        bonding_pct = 0.0
+                    # Token is very early
+                    bonding_pct = 0.0
             else:
+                # Non-pump tokens are considered graduated
                 bonding_pct = 100.0
 
         data.append({

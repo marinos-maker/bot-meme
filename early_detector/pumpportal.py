@@ -36,15 +36,20 @@ async def fetch_pumpportal_token_data(session: aiohttp.ClientSession, token_addr
                 is_complete = data.get("complete", False)
                 
                 # Calculate bonding progress
-                # Pump.fun graduates at ~85 SOL reserves
-                GRADUATION_SOL = 85.0
+                # V6.1 FIX: Correct bonding curve calculation
+                # Pump.fun bonding curve starts at ~30 SOL and graduates at ~85 SOL
+                START_SOL = 30.0      # Bonding curve starts at ~30 SOL
+                GRADUATION_SOL = 85.0  # Pump.fun graduates at ~85 SOL
                 bonding_pct = 0.0
                 
                 if virtual_sol_reserves > 0:
                     if is_complete and virtual_sol_reserves >= GRADUATION_SOL:
                         bonding_pct = 100.0
+                    elif virtual_sol_reserves >= GRADUATION_SOL:
+                        bonding_pct = 100.0
                     else:
-                        bonding_pct = min((virtual_sol_reserves / GRADUATION_SOL) * 100, 99.0)
+                        # Correct formula: (current - start) / (end - start)
+                        bonding_pct = max(0.0, min(((virtual_sol_reserves - START_SOL) / (GRADUATION_SOL - START_SOL)) * 100, 99.0))
                 
                 return {
                     "virtual_sol_reserves": virtual_sol_reserves,
