@@ -83,3 +83,12 @@ SLIPPAGE_BPS: int = int(os.getenv("SLIPPAGE_BPS", "200"))  # 200 = 2%
 AUTO_TRADE_ENABLED: bool = os.getenv("AUTO_TRADE_ENABLED", "true").lower() == "true"
 SOL_MINT: str = "So11111111111111111111111111111111111111112"
 
+# ── Sniper Engine (V6.0) ──────────────────────────────────────────────────────
+SNIPER_ENABLED: bool = os.getenv("SNIPER_ENABLED", "false").lower() == "true"
+SNIPER_AMOUNT_SOL: float = float(os.getenv("SNIPER_AMOUNT_SOL", "0.05"))
+SNIPER_MAX_RUG_RATIO: float = float(os.getenv("SNIPER_MAX_RUG_RATIO", "0.3"))  # Max 30% rugs for creator
+SNIPER_MIN_LIFESPAN_HOURS: float = float(os.getenv("SNIPER_MIN_LIFESPAN_HOURS", "12.0")) # At least 12h avg lifespan
+
+# ── Performance & Optimization (V6.0) ─────────────────────────────────────────
+FAST_MODE: bool = os.getenv("FAST_MODE", "true").lower() == "true" # Skip slow RPC/AI calls
+

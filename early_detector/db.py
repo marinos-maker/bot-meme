@@ -574,3 +574,81 @@ async def cleanup_old_data(days: int = 7) -> int:
         logger.error(f"❌ Cleanup failed: {e}")
         return 0
 
+
+# ── Sniper Helpers (V6.0) ───────────────────────────────────────────────────
+
+async def check_suspicious_wallet(wallet_address: str) -> dict:
+    """
+    Check if a wallet or creator is known to be 'suspicious' in the DB.
+    Returns: {'is_suspicious': bool, 'reason': str, 'rug_ratio': float, 'avg_lifespan': float}
+    """
+    if not wallet_address:
+        return {"is_suspicious": True, "reason": "Missing address", "rug_ratio": 1.0, "avg_lifespan": 0}
+
+    pool = await get_pool()
+    
+    # 1. Check Creator Performance (Most important for Sniping)
+    creator_row = await pool.fetchrow(
+        "SELECT rug_ratio, avg_lifespan, total_tokens FROM creator_performance WHERE creator_address = $1",
+        wallet_address
+    )
+    
+    rug_ratio = 0.0
+    avg_lifespan = 0.0
+    if creator_row:
+        rug_ratio = float(creator_row["rug_ratio"] or 0.0)
+        avg_lifespan = float(creator_row["avg_lifespan"] or 0.0)
+        
+        # High Rug Ratio = SUSPICIOUS
+        from early_detector.config import SNIPER_MAX_RUG_RATIO, SNIPER_MIN_LIFESPAN_HOURS
+        if rug_ratio > SNIPER_MAX_RUG_RATIO:
+            return {
+                "is_suspicious": True, 
+                "reason": f"High Rug Ratio ({rug_ratio:.1%})", 
+                "rug_ratio": rug_ratio, 
+                "avg_lifespan": avg_lifespan
+            }
+        
+        # Safe but failed tokens = CAUTION
+        if avg_lifespan < SNIPER_MIN_LIFESPAN_HOURS and creator_row["total_tokens"] > 1:
+             return {
+                "is_suspicious": True, 
+                "reason": f"Short avg lifespan ({avg_lifespan:.1f}h)", 
+                "rug_ratio": rug_ratio, 
+                "avg_lifespan": avg_lifespan
+            }
+
+    # 2. Check Wallet Performance (Clustering)
+    wallet_row = await pool.fetchrow(
+        "SELECT cluster_label, avg_roi FROM wallet_performance WHERE wallet = $1",
+        wallet_address
+    )
+    
+    if wallet_row:
+        label = wallet_row["cluster_label"]
+        # Explicit labels that signify suspicion
+        if label in ["high_volume_noise", "scam"]:
+            return {
+                "is_suspicious": True, 
+                "reason": f"Cluster Label: {label}", 
+                "rug_ratio": rug_ratio, 
+                "avg_lifespan": avg_lifespan
+            }
+        
+        # Low ROI with high activity often means wash trading or noise bot
+        avg_roi = float(wallet_row["avg_roi"] or 1.0)
+        if avg_roi < 0.5:
+             return {
+                "is_suspicious": True, 
+                "reason": f"Low ROI ({avg_roi:.2f}x)", 
+                "rug_ratio": rug_ratio, 
+                "avg_lifespan": avg_lifespan
+            }
+
+    return {
+        "is_suspicious": False, 
+        "reason": "Clear", 
+        "rug_ratio": rug_ratio, 
+        "avg_lifespan": avg_lifespan
+    }
+

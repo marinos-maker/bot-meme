@@ -433,8 +433,10 @@ async def fetch_token_metrics(session: aiohttp.ClientSession,
 
     # Integrate Helius metrics if available ONLY FOR VIABLE TOKENS
     # (to save the 1,000,000 requests/month limit)
+    # V6.0 FAST_MODE: Skip Helius for maximum speed
+    from early_detector.config import FAST_MODE
     h_metrics = {}
-    if metrics.get("price", 0) > 0 and metrics.get("liquidity", 0) > 200:
+    if not FAST_MODE and metrics.get("price", 0) > 0 and metrics.get("liquidity", 0) > 200:
         h_metrics = await fetch_helius_metrics(session, token_address)
         if h_metrics:
             if "top10_ratio" in h_metrics:

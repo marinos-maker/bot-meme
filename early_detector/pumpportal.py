@@ -203,6 +203,56 @@ async def pumpportal_worker(token_queue: asyncio.Queue, smart_wallets: list[str]
                             # Increment tokens launched by this creator
                             if trader:
                                 await upsert_creator_stats(trader, {"total_tokens": 1})
+                            
+                            # ── SNIPER LOGIC (V6.0) ──
+                            from early_detector.config import SNIPER_ENABLED, SNIPER_AMOUNT_SOL, SLIPPAGE_BPS, DEFAULT_TP_PCT, DEFAULT_SL_PCT
+                            if SNIPER_ENABLED and trader:
+                                from early_detector.db import check_suspicious_wallet, insert_trade
+                                from early_detector.trader import execute_buy, get_sol_balance
+                                
+                                # 1. Check if creator is suspicious
+                                risk = await check_suspicious_wallet(trader)
+                                if risk["is_suspicious"]:
+                                    logger.warning(f"🚫 Sniper: Skipping {symbol} - Creator {trader[:8]}... is SUSPICIOUS: {risk['reason']}")
+                                else:
+                                    # Use a dedicated session for the snipe to avoid interfering with the main worker
+                                    async with aiohttp.ClientSession() as snipe_session:
+                                        # 2. Check balance
+                                        balance = await get_sol_balance(snipe_session)
+                                        if balance >= SNIPER_AMOUNT_SOL:
+                                            logger.info(f"🎯 SNIPER: Buying {symbol} ({mint[:8]}) - Creator reputation clean.")
+                                            
+                                            # Execute immediate buy
+                                            result = await execute_buy(snipe_session, mint, SNIPER_AMOUNT_SOL, SLIPPAGE_BPS)
+                                            
+                                            if result["success"]:
+                                                logger.info(f"🚀 SNIPER SUCCESS: Bought {result.get('amount_token', 0):.0f} {symbol} for {SNIPER_AMOUNT_SOL} SOL")
+                                                
+                                                # Send Telegram Notification for Sniper
+                                                from early_detector.signals import send_sniper_alert
+                                                asyncio.create_task(send_sniper_alert(
+                                                    address=mint,
+                                                    symbol=symbol,
+                                                    name=name,
+                                                    amount_sol=SNIPER_AMOUNT_SOL,
+                                                    tx_hash=result.get("tx_hash", ""),
+                                                    risk_reason="Creator reputation clean"
+                                                ))
+
+                                                await insert_trade(
+                                                    token_address=mint,
+                                                    side="BUY",
+                                                    amount_sol=SNIPER_AMOUNT_SOL,
+                                                    amount_token=result.get("amount_token", 0),
+                                                    price_entry=result.get("price", 0),
+                                                    tp_pct=DEFAULT_TP_PCT,
+                                                    sl_pct=DEFAULT_SL_PCT,
+                                                    tx_hash=result.get("tx_hash", "")
+                                                )
+                                            else:
+                                                logger.error(f"❌ SNIPER FAILED: {result.get('error')}")
+                                        else:
+                                            logger.warning(f"⚠️ Sniper: Insufficient balance ({balance:.4f} SOL)")
                         
                         # B. Trade Activity & Wallet Tracking
                         if trader and tx_type in ["buy", "sell", "migration"]:
@@ -220,6 +270,13 @@ async def pumpportal_worker(token_queue: asyncio.Queue, smart_wallets: list[str]
                                     # Create new entry for previously unknown wallet
                                     await increment_wallet_trades(trader, cluster="new")
                                     known_wallets.add(trader)
+                                    
+                                    # Sniper V6.0: If a smart wallet buys a token early, consider it a 'Smart Snipe'
+                                    if is_trade and tx_type == "buy" and trader in smart_wallets:
+                                        # This could trigger another type of snipe (Copy-Trading)
+                                        # For now, we just log it as a strong signal
+                                        logger.info(f"🔥 Smart Wallet {trader[:8]} is SNIPING {mint[:8]}! High conviction.")
+                                        
                                 except Exception as e:
                                     logger.error(f"Error upserting wallet {trader[:8]}: {e}")
 

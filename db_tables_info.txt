@@ -1,0 +1,15 @@
+Tables in database:
+- token_metrics_timeseries
+  Columns: ['bonding_pct', 'token_id', 'timestamp', 'price', 'marketcap', 'liquidity', 'holders', 'volume_5m', 'volume_1h', 'buys_5m', 'sells_5m', 'top10_ratio', 'smart_wallets_active', 'instability_index', 'insider_psi', 'creator_risk_score', 'bonding_is_complete', 'id', 'mint_authority', 'freeze_authority']
+- tokens
+  Columns: ['id', 'created_at', 'first_seen_at', 'symbol', 'mint_authority', 'freeze_authority', 'narrative', 'creator_address', 'address', 'name']
+- wallet_performance
+  Columns: ['avg_roi', 'total_trades', 'win_rate', 'last_active', 'wallet', 'cluster_label']
+- signals
+  Columns: ['id', 'token_id', 'timestamp', 'instability_index', 'entry_price', 'liquidity', 'marketcap', 'confidence', 'kelly_size', 'insider_psi', 'creator_risk', 'hard_stop', 'tp_1', 'degen_score', 'ai_analysis', 'freeze_authority', 'mint_authority', 'ai_summary']
+- creator_performance
+  Columns: ['rug_ratio', 'avg_lifespan', 'total_tokens', 'last_updated', 'creator_address']
+- market_regime
+  Columns: ['id', 'timestamp', 'total_volume_5m', 'regime_label']
+- trades
+  Columns: ['closed_at', 'token_id', 'tp_pct', 'sl_pct', 'roi_pct', 'created_at', 'id', 'amount_sol', 'amount_token', 'price_entry', 'price_exit', 'token_address', 'side', 'tx_hash_sell', 'status', 'tx_hash_buy']

@@ -249,60 +249,19 @@ def passes_trigger(token: dict, threshold: float) -> bool:
         return False
         
     # 7. Candle Analysis (Early Breakout Detection)
-    if not passes_candle_analysis(token):
-        logger.info(f"Trigger rejected: Failed candle analysis for {token.get('symbol') or token.get('address')}")
-        return False
+    # V6.0: Candle analysis can be slow, skipping for maximum speed in Sniper mode
+    # if not passes_candle_analysis(token):
+    #     logger.info(f"Trigger rejected: Failed candle analysis for {token.get('symbol') or token.get('address')}")
+    #     return False
 
     return True
 
 
 def passes_candle_analysis(token: dict) -> bool:
     """
-    Analyze the first 5-6 candles for breakout patterns.
-    This is the core of the new strategy for predicting where the market will go.
+    V6.0: Simplified/Bypassed for maximum speed.
     """
-    # Get candle data
-    candles = token.get("candles", [])
-    age_minutes = token.get("age_minutes", 0)
-    
-    if len(candles) < 3:
-        # If we don't have enough candles yet, be more permissive for very new tokens
-        if age_minutes < 10:  # Less than 10 minutes old
-            # For very new tokens, rely more on other metrics
-            logger.info(f"Candle Analysis: Very new token ({age_minutes}m), using other metrics for {token.get('symbol')}")
-            return True
-        return False
-    
-    # Use the new comprehensive candle analysis module
-    try:
-        from early_detector.candle_analysis import analyze_candles, is_early_token, get_early_token_strategy
-        
-        # Perform comprehensive candle analysis
-        analysis_result = analyze_candles(candles)
-        
-        if analysis_result.get("score", 0) >= 0.6:
-            logger.info(f"Candle Analysis: Strong bullish signal (score: {analysis_result.get('score', 0):.2f}) for {token.get('symbol')}")
-            return True
-        elif analysis_result.get("score", 0) >= 0.4:
-            logger.info(f"Candle Analysis: Moderate bullish signal (score: {analysis_result.get('score', 0):.2f}) for {token.get('symbol')}")
-            return True
-        elif is_early_token(candles, age_minutes):
-            strategy = get_early_token_strategy(candles, analysis_result.get("analysis", {}))
-            if strategy.startswith(("AGGRESSIVE ENTRY", "CAUTIOUS ENTRY")):
-                logger.info(f"Candle Analysis: Early token strategy ({strategy}) for {token.get('symbol')}")
-                return True
-        
-        # Log patterns detected even if not strong enough
-        patterns = analysis_result.get("patterns", [])
-        if patterns:
-            logger.info(f"Candle Analysis: Patterns detected ({', '.join(patterns)}) for {token.get('symbol')}")
-            
-        return False
-        
-    except Exception as e:
-        logger.warning(f"Candle analysis failed for {token.get('symbol')}: {e}")
-        # If candle analysis fails, don't reject - be permissive
-        return True
+    return True
 
 
 
@@ -614,29 +573,16 @@ async def process_signals(scored_df, threshold: float, regime_label: str = "UNKN
         from early_detector.diary import log_trade_signal
         log_trade_signal(signal, regime_label)
 
-        # ── AI Analysis (Z.AI OpenRouter) ──
-        from early_detector.analyst import analyze_token_signal
+        # ── Quantitative Score (NO AI) ──
+        # V6.0: AI Analysis removed for maximum speed
+        degen_score = calculate_quantitative_degen_score(token_data, base_confidence)
         
-        logger.info(f"🧠 Prompting AI Analyst for {signal.get('symbol')}...")
-        # Since history is difficult to reconstruct fully here, we pass empty list.
-        # Analyst.py uses token_data and handles empty history gracefully.
-        try:
-            ai_result = await analyze_token_signal(token_data, [])
-            degen_score = ai_result.get("degen_score")
-            if degen_score is None or degen_score == 0:
-                degen_score = calculate_quantitative_degen_score(token_data, base_confidence)
-                logger.info(f"AI returned no score, using quantitative fallback: {degen_score}")
-        except Exception as e:
-            logger.warning(f"AI Analyst failed for {signal.get('symbol')}: {e}. Using quantitative score.")
-            degen_score = calculate_quantitative_degen_score(token_data, base_confidence)
-            ai_result = {"degen_score": degen_score, "summary": f"Quantitative score: {degen_score} (AI unavailable)"}
-            
         signal["degen_score"] = degen_score
-        signal["ai_summary"] = ai_result.get("summary", f"Score: {degen_score}")
-        signal["ai_analysis"] = ai_result
+        signal["ai_summary"] = f"Quantitative Score: {degen_score}"
+        signal["ai_analysis"] = {"degen_score": degen_score, "summary": signal["ai_summary"]}
 
         # V4.6 Stability Quality Gate
-        if not passes_quality_gate(signal, ai_result):
+        if not passes_quality_gate(signal, signal["ai_analysis"]):
              continue
 
         # Save to DB
@@ -787,3 +733,40 @@ async def send_telegram_alert(signal: dict) -> None:
                     logger.error(f"Telegram error {resp.status}: {body}")
     except Exception as e:
         logger.error(f"Telegram send failed: {e}")
+
+
+async def send_sniper_alert(address: str, symbol: str, name: str, amount_sol: float, tx_hash: str, risk_reason: str):
+    """
+    Sends a specialized Telegram alert for Sniper (immediate) buys.
+    """
+    from early_detector.config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+
+    text = (
+        f"🎯 <b>SNIPER BUY EXECUTED (V6.0)</b>\n\n"
+        f"🪙 <b>{symbol}</b> — {name}\n"
+        f"📍 <b>Address:</b> <code>{address}</code>\n"
+        f"💰 <b>Amount:</b> <code>{amount_sol} SOL</code>\n"
+        f"✅ <b>Status:</b> Immediate Purchase (T-0)\n"
+        f"🛡️ <b>Why:</b> {risk_reason}\n"
+        f"\n"
+        f"🔗 <a href='https://solscan.io/tx/{tx_hash}'>View Transaction</a>\n"
+        f"🔗 <a href='https://dexscreener.com/solana/{address}'>DexScreener</a>"
+    )
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, timeout=10) as resp:
+                if resp.status == 200:
+                    logger.debug("Sniper Telegram alert sent successfully")
+    except Exception as e:
+        logger.error(f"Sniper Telegram alert failed: {e}")
