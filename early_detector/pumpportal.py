@@ -198,16 +198,16 @@ async def pumpportal_worker(token_queue: asyncio.Queue, smart_wallets: list[str]
                             virtual_sol_reserves = float(data.get("virtual_sol_reserves", 0) or 0)
                             
                             logger.info(f"🆕 PumpPortal: New Token {symbol} ({mint[:6]}...) by {trader[:6]}... (initial_sol={initial_sol:.4f})")
-                            await upsert_token(mint, name, symbol, narrative="GENERIC", creator_address=trader)
+                            token_id = await upsert_token(mint, name, symbol, narrative="GENERIC", creator_address=trader)
                             
                             # Increment tokens launched by this creator
                             if trader:
                                 await upsert_creator_stats(trader, {"total_tokens": 1})
                             
-                            # ── SNIPER LOGIC (V6.0) ──
-                            from early_detector.config import SNIPER_ENABLED, SNIPER_AMOUNT_SOL, SLIPPAGE_BPS, DEFAULT_TP_PCT, DEFAULT_SL_PCT
+                            # ── SNIPER LOGIC (V6.3) ──
+                            from early_detector.config import SNIPER_ENABLED, SNIPER_AMOUNT_SOL, SLIPPAGE_BPS, DEFAULT_TP_PCT, DEFAULT_SL_PCT, AUTO_TRADE_ENABLED
                             if SNIPER_ENABLED and trader:
-                                from early_detector.db import check_suspicious_wallet, insert_trade
+                                from early_detector.db import check_suspicious_wallet, insert_trade, insert_signal
                                 from early_detector.trader import execute_buy, get_sol_balance
                                 
                                 # 1. Check if creator is suspicious
@@ -215,44 +215,57 @@ async def pumpportal_worker(token_queue: asyncio.Queue, smart_wallets: list[str]
                                 if risk["is_suspicious"]:
                                     logger.warning(f"🚫 Sniper: Skipping {symbol} - Creator {trader[:8]}... is SUSPICIOUS: {risk['reason']}")
                                 else:
-                                    # Use a dedicated session for the snipe to avoid interfering with the main worker
-                                    async with aiohttp.ClientSession() as snipe_session:
-                                        # 2. Check balance
-                                        balance = await get_sol_balance(snipe_session)
-                                        if balance >= SNIPER_AMOUNT_SOL:
-                                            logger.info(f"🎯 SNIPER: Buying {symbol} ({mint[:8]}) - Creator reputation clean.")
-                                            
-                                            # Execute immediate buy
-                                            result = await execute_buy(snipe_session, mint, SNIPER_AMOUNT_SOL, SLIPPAGE_BPS)
-                                            
-                                            if result["success"]:
-                                                logger.info(f"🚀 SNIPER SUCCESS: Bought {result.get('amount_token', 0):.0f} {symbol} for {SNIPER_AMOUNT_SOL} SOL")
-                                                
-                                                # Send Telegram Notification for Sniper
-                                                from early_detector.signals import send_sniper_alert
-                                                asyncio.create_task(send_sniper_alert(
-                                                    address=mint,
-                                                    symbol=symbol,
-                                                    name=name,
-                                                    amount_sol=SNIPER_AMOUNT_SOL,
-                                                    tx_hash=result.get("tx_hash", ""),
-                                                    risk_reason="Creator reputation clean"
-                                                ))
+                                    # ALWAYS record this as a signal regardless of balance or Auto-Trade setting
+                                    est_mcap = 4500.0 if initial_sol < 0.1 else (initial_sol * 30000)
+                                    est_liq = 1000.0
+                                    
+                                    await insert_signal(
+                                        token_id=token_id,
+                                        instability_index=8.0, # High intensity for Sniper discoveries
+                                        entry_price=0.000001, 
+                                        liquidity=est_liq,
+                                        marketcap=est_mcap,
+                                        confidence=risk.get("score", 0.9),
+                                        degen_score=90,
+                                        ai_summary=f"🎯 SNIPER ALERT: New launch by clean creator ({trader[:6]}...). Reputation: Clean."
+                                    )
+                                    
+                                    # Also send to Telegram as a "Signal" even if we don't buy
+                                    from early_detector.signals import send_sniper_alert
+                                    asyncio.create_task(send_sniper_alert(
+                                        address=mint,
+                                        symbol=symbol,
+                                        name=name,
+                                        amount_sol=SNIPER_AMOUNT_SOL,
+                                        tx_hash="SIGNALING_ONLY",
+                                        risk_reason=f"Reputation Clean (Lifespan: {risk.get('avg_lifespan', 0):.1f}h)"
+                                    ))
 
-                                                await insert_trade(
-                                                    token_address=mint,
-                                                    side="BUY",
-                                                    amount_sol=SNIPER_AMOUNT_SOL,
-                                                    amount_token=result.get("amount_token", 0),
-                                                    price_entry=result.get("price", 0),
-                                                    tp_pct=DEFAULT_TP_PCT,
-                                                    sl_pct=DEFAULT_SL_PCT,
-                                                    tx_hash=result.get("tx_hash", "")
-                                                )
+                                    # 2. Execute trade ONLY if balance > 0 AND AUTO_TRADE_ENABLED is true
+                                    if AUTO_TRADE_ENABLED:
+                                        # Use a dedicated session for the snipe
+                                        async with aiohttp.ClientSession() as snipe_session:
+                                            balance = await get_sol_balance(snipe_session)
+                                            if balance >= SNIPER_AMOUNT_SOL:
+                                                logger.info(f"🎯 SNIPER AUTO-TRADE: Buying {symbol} - Creator reputation clean.")
+                                                result = await execute_buy(snipe_session, mint, SNIPER_AMOUNT_SOL, SLIPPAGE_BPS)
+                                                
+                                                if result["success"]:
+                                                    logger.info(f"🚀 SNIPER SUCCESS: Bought {symbol}")
+                                                    await insert_trade(
+                                                        token_address=mint, side="BUY",
+                                                        amount_sol=SNIPER_AMOUNT_SOL,
+                                                        amount_token=result.get("amount_token", 0),
+                                                        price_entry=result.get("price", 0),
+                                                        tp_pct=DEFAULT_TP_PCT, sl_pct=DEFAULT_SL_PCT,
+                                                        tx_hash=result.get("tx_hash", "")
+                                                    )
+                                                else:
+                                                    logger.error(f"❌ SNIPER TRADE FAILED: {result.get('error')}")
                                             else:
-                                                logger.error(f"❌ SNIPER FAILED: {result.get('error')}")
-                                        else:
-                                            logger.warning(f"⚠️ Sniper: Insufficient balance ({balance:.4f} SOL)")
+                                                logger.warning(f"⚠️ Sniper: Trade skipped (Insufficient balance: {balance:.4f} SOL)")
+                                    else:
+                                        logger.info(f"ℹ️ Sniper: Signal generated but Trade skipped (AUTO_TRADE_ENABLED=false)")
                         
                         # B. Trade Activity & Wallet Tracking
                         if trader and tx_type in ["buy", "sell", "migration"]:
