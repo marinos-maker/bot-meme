@@ -115,8 +115,10 @@ async def api_signals(limit: int = 50):
         FROM signals s
         JOIN tokens t ON t.id = s.token_id
         LEFT JOIN latest_metrics m ON m.token_id = s.token_id
-        WHERE COALESCE(m.marketcap, s.marketcap) >= 5000
-          AND COALESCE(m.liquidity, s.liquidity) >= 500
+        WHERE (
+            (COALESCE(m.marketcap, s.marketcap) >= 5000 AND COALESCE(m.liquidity, s.liquidity) >= 500)
+            OR s.ai_summary LIKE '%SNIPER%'
+          )
           AND s.confidence >= 0.20
         ORDER BY s.timestamp DESC
         LIMIT $1
