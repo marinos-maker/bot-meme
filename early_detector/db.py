@@ -566,11 +566,11 @@ async def cleanup_old_data(days: int = 2) -> int:
         )
 
         # 4. Clean old wallets (Clear noise from 'Wallets Profiled')
-        # Delete wallets not active in 7 days that aren't smart or insider
+        # Delete wallets not active in 2 days that aren't smart or insider
         await pool.execute(
             """
             DELETE FROM wallet_performance 
-            WHERE last_active < NOW() - INTERVAL '7 days'
+            WHERE last_active < NOW() - INTERVAL '2 days'
             AND cluster_label NOT IN ('smart', 'insider')
             """
         )
