@@ -439,16 +439,17 @@ async def update_wallet_profiles_job(session):
 
 
 async def db_maintenance_job():
-    """Periodic job to clean up old data (daily)."""
+    """Periodic job to clean up old data (more frequent for V6.2)."""
     from early_detector.db import cleanup_old_data
     while True:
         try:
-            await cleanup_old_data(days=7)
+            # Aggressive cleanup: remove tokens/metrics older than 2 days
+            await cleanup_old_data(days=2)
         except Exception as e:
             logger.error(f"Maintenance error: {e}")
         
-        # Sleep for 24 hours
-        await asyncio.sleep(86400)
+        # Sleep for 6 hours (instead of 24) to keep DB lean
+        await asyncio.sleep(6 * 3600)
 
 
 

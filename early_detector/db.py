@@ -534,33 +534,44 @@ async def get_positions_with_roi() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def cleanup_old_data(days: int = 7) -> int:
+async def cleanup_old_data(days: int = 2) -> int:
     """
-    Maintenance: Delete metrics older than N days and orphaned tokens.
+    V6.2: Aggressive maintenance: Delete old data and orphaned tokens.
+    Protecting active portfolio tokens and cleaning low-quality wallet data.
     """
     pool = await get_pool()
     try:
-        # 1. Clean metrics (Time-Series)
+        # 1. Clean metrics (Time-Series) - Aggressive keeping only 48h
         await pool.execute(
             "DELETE FROM token_metrics_timeseries WHERE timestamp < NOW() - ($1 || ' days')::INTERVAL",
             str(days)
         )
         
-        # 2. Clean signals
+        # 2. Clean signals - Keep for 2 days
         await pool.execute(
             "DELETE FROM signals WHERE timestamp < NOW() - ($1 || ' days')::INTERVAL",
             str(days)
         )
         
         # 3. Clean orphaned tokens 
-        # (Tokens with no metrics and not linked to any trade, older than 24h)
+        # (Tokens with no metrics AND NOT in an active 'OPEN' trade)
         res = await pool.execute(
             """
             DELETE FROM tokens 
             WHERE id NOT IN (SELECT DISTINCT token_id FROM token_metrics_timeseries)
-            AND id NOT IN (SELECT DISTINCT token_id FROM trades)
+            AND id NOT IN (SELECT DISTINCT token_id FROM trades WHERE status = 'OPEN')
             AND id NOT IN (SELECT DISTINCT token_id FROM signals)
-            AND created_at < NOW() - INTERVAL '24 hours'
+            AND created_at < NOW() - INTERVAL '48 hours'
+            """
+        )
+
+        # 4. Clean old wallets (Clear noise from 'Wallets Profiled')
+        # Delete wallets not active in 7 days that aren't smart or insider
+        await pool.execute(
+            """
+            DELETE FROM wallet_performance 
+            WHERE last_active < NOW() - INTERVAL '7 days'
+            AND cluster_label NOT IN ('smart', 'insider')
             """
         )
         
@@ -568,7 +579,7 @@ async def cleanup_old_data(days: int = 7) -> int:
         if res and "DELETE" in res:
             deleted_count = int(res.split()[-1])
             
-        logger.info(f"🧹 Database Cleanup: Removed metrics older than {days} days and {deleted_count} orphaned tokens.")
+        logger.info(f"🧹 DB Cleanup: Removed data older than {days} days and {deleted_count} stale tokens.")
         return deleted_count
     except Exception as e:
         logger.error(f"❌ Cleanup failed: {e}")
