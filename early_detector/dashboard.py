@@ -166,7 +166,7 @@ async def api_signals(limit: int = 50):
             "kelly_size": kelly,
             "insider_psi": psi,
             "creator_risk": risk,
-            "top10_ratio": float(r.get("live_top10_ratio") or 0),
+            "top10_ratio": float(r["live_top10_ratio"] or 0),
             "degen_score": r["degen_score"],
             "ai_summary": r["ai_summary"],
             "ai_analysis": ai_analysis,
@@ -201,10 +201,13 @@ async def api_signals_recent(minutes: int = 10):
         FROM signals s
         JOIN tokens t ON t.id = s.token_id
         LEFT JOIN latest_metrics m ON m.token_id = s.token_id
-        WHERE s.timestamp > NOW() - INTERVAL $1
+        WHERE (
+            s.timestamp > NOW() - ($1 || ' minutes')::INTERVAL
+            OR s.ai_summary LIKE '%SNIPER%'
+          )
         ORDER BY s.timestamp DESC
         """,
-        f"{minutes} minutes",
+        str(minutes),
     )
 
     import math
