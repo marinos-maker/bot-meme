@@ -1702,6 +1702,11 @@
                                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                             </svg>
                         </span>
+                        <div style="margin-top:4px;">
+                            ${(s.ai_summary || '').includes('SNIPER') ?
+                    '<span class="label label-sniper">🎯 SNIPER BUY</span>' :
+                    '<span class="label label-retail" style="background:rgba(6, 182, 212, 0.15); color:var(--cyan);">🔍 EARLY DETECTOR</span>'}
+                        </div>
                     </div>
                 </td>
                 <td>
@@ -1739,6 +1744,7 @@
                 <td>
                     <div style="display:flex;gap:4px;flex-direction:column;">
                         <button class="buy-btn" onclick="openTradeModal('${s.token_address}', '${displayName}')">🟢 BUY</button>
+                        <a href="${s.buy_url}" target="_blank" class="buy-btn" style="background:var(--yellow); color:black; text-decoration:none; justify-content:center;">💊 PUMP</a>
                         <button class="buy-btn" style="background:var(--red);font-size:10px;padding:4px 8px;" onclick="executeQuickSell('${s.token_address}', '${displayName}')">🔴 SELL</button>
                     </div>
                 </td>
@@ -1967,6 +1973,7 @@
                     <td>
                         <div style="display:flex;gap:4px;flex-direction:column;">
                             <button class="buy-btn" onclick="openTradeModal('${t.address}', '${displayName}')">🟢 BUY</button>
+                            <a href="${t.buy_url}" target="_blank" class="buy-btn" style="background:var(--yellow); color:black; text-decoration:none; justify-content:center;">💊 PUMP</a>
                             <button class="buy-btn" style="background:var(--red);font-size:10px;padding:4px 8px;" onclick="executeQuickSell('${t.address}', '${displayName}')">🔴 SELL</button>
                         </div>
                     </td>
@@ -2386,6 +2393,11 @@
                             <div class="token-info">
                                 <span class="token-name" style="font-size: 20px;">${displayName}</span>
                                 <span class="token-address">${s.token_address.slice(0, 10)}...</span>
+                                <div style="margin-top:4px;">
+                                    ${(s.ai_summary || '').includes('SNIPER') ?
+                        '<span class="label label-sniper">🎯 SNIPER BUY</span>' :
+                        '<span class="label label-retail" style="background:rgba(6, 182, 212, 0.15); color:var(--cyan);">🔍 EARLY DETECTOR</span>'}
+                                </div>
                             </div>
                             <div class="score-badge v-BUY" style="font-size: 14px; padding: 6px 12px;">SCORE: ${s.degen_score || '??'}</div>
                         </div>
@@ -2395,9 +2407,14 @@
                             <div>Instability: <b style="color:var(--accent)">${s.instability_index.toFixed(2)}</b></div>
                             <div>Confidence: <b style="color:var(--green)">${(s.confidence * 100).toFixed(0)}%</b>${top10Warn}</div>
                         </div>
-                        <button class="action-btn primary" onclick="openTradeModal('${s.token_address}', '${displayName}')">
-                            ⚡ Quick Buy ${displayName}
-                        </button>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <button class="action-btn primary" onclick="openTradeModal('${s.token_address}', '${displayName}')">
+                                ⚡ Buy ${displayName}
+                            </button>
+                            <a href="${s.buy_url}" target="_blank" class="action-btn secondary" style="background:var(--yellow); color:black; border:none; text-decoration:none;">
+                                💊 Pump.fun
+                            </a>
+                        </div>
                     </div>
                 `;
             }).join('');
