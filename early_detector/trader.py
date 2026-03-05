@@ -239,6 +239,13 @@ async def execute_sell(session: aiohttp.ClientSession,
 
     async with _sem:
         try:
+            # Pre-trade balance check
+            balance_token = await get_token_balance(session, token_address)
+            if balance_token <= 0:
+                msg = f"No tokens to sell: balance is {balance_token}"
+                logger.warning(f"⚠️ {msg}")
+                return {"success": False, "error": msg, "reason": "ZERO_BALANCE"}
+
             slippage_pct = slippage_bps / 100.0
             
             # PumpPortal Lightning API request
@@ -253,7 +260,7 @@ async def execute_sell(session: aiohttp.ClientSession,
                 "skipPreflight": "false",
             }
 
-            logger.info(f"🔴 SELL request: {amount_to_sell} tokens → {token_address[:8]}... (slippage={slippage_pct}%)")
+            logger.info(f"🔴 SELL request: {amount_to_sell} tokens ({balance_token:.2f} available) → {token_address[:8]}... (slippage={slippage_pct}%)")
             
             async with session.post(PUMPPORTAL_TRADE_URL, data=data, timeout=30) as resp:
                 result = await resp.json()
